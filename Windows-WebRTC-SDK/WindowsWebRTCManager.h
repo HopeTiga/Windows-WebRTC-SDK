@@ -248,6 +248,51 @@ namespace hope {
             void setOnReceiveVideoFrameHandle(std::function<void(int, int, int, const uint8_t*, const uint8_t*, const uint8_t*, int, int, int)> handle);
 
             /**
+             * @brief 设置创建Offer之前的回调处理函数
+             * @param handle 无参数无返回值的回调函数，在createOffer操作执行前被触发
+             * @note 此回调在WebRTC本地即将生成SDP Offer时调用，为关键协商节点提供介入点[5](@ref)。
+             *       典型应用场景包括：
+             *       - 动态调整媒体约束（如码率、分辨率）或编码器参数
+             *       - 在特定网络条件下重新配置ICE参数（如触发iceRestart）
+             *       - 检查或更新本地媒体流状态，确保轨道可用[1](@ref)
+             *       - 执行自定义日志记录或诊断逻辑
+             * @warning 回调函数应避免执行耗时操作，以免阻塞主线程和信令流程[6](@ref)。
+             *          在此回调中修改媒体配置后，需确保后续createOffer能使用最新状态。
+             * @see createOffer, setOnReceiveOfferBeforeHandle
+             * @example
+             *   webrtcManager->setOnCreateOfferBeforeHandle([]() {
+             *       // 在创建Offer前，确保视频轨道已启用并调整最大码率
+             *       if (videoTrack) {
+             *           videoTrack->setEnabled(true);
+             *           // ... 应用新的编码参数
+             *       }
+             *       qDebug() << "即将创建Offer，当前连接状态：" << webrtcManager->getConnectionState();
+             *   });
+             */
+            void setOnCreateOfferBeforeHandle(std::function<void()> handle);
+
+            /**
+             * @brief 设置接收远端Offer之前的回调处理函数
+             * @param handle 无参数无返回值的回调函数，在setRemoteDescription操作执行前被触发
+             * @note 此回调在收到远端SDP Offer后、将其设置为远程描述前调用[5](@ref)。
+             *       主要用于在正式处理Offer前进行预处理或验证：
+             *       - 解析远端SDP，检查其媒体能力（编解码器支持情况）[3](@ref)
+             *       - 根据远端Offer的内容，决定是否接受连接或调整本地配置
+             *       - 执行安全验证，如检查Offer来源的合法性
+             *       - 为即将进行的Answer创建准备必要的资源
+             * @warning 回调中不应修改远端的Offer内容。若需要修改协商条件，应在创建Answer时进行调整。
+             *          同样需避免长时间阻塞，以免影响信令交互的实时性[6](@ref)。
+             * @see setRemoteDescription, createAnswer, setOnCreateOfferBeforeHandle
+             * @example
+             *   webrtcManager->setOnReceiveOfferBeforeHandle([]() {
+             *       // 在设置远程描述前，记录或分析远端Offer
+             *       qDebug() << "已收到远端Offer，即将进行媒体协商...";
+             *       // 可以在此处检查远端是否支持H.264，从而决定本地Answer的编码选择
+             *   });
+             */
+            void setOnReceiveOfferBeforeHandle(std::function<void()> handle);
+
+            /**
              * @brief 获取当前连接状态
              * @return 连接状态枚举值
              */

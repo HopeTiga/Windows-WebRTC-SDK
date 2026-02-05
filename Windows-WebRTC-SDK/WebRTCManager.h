@@ -146,6 +146,10 @@ namespace hope {
 
 			std::function<void(int,int, int,const uint8_t *, const uint8_t*, const uint8_t*, int, int, int)> onReceiveVideoFrameHandle;
 
+            std::function<void()> onCreateOfferBeforeHandle;
+
+            std::function<void()> onReceiveOfferBeforeHandle;
+
         private:
 
             bool initializePeerConnection();

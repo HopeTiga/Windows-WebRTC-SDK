@@ -573,6 +573,12 @@ namespace hope {
                                         targetId = std::string(json["accountId"].as_string().c_str());
                                     }
 
+                                    if (onCreateOfferBeforeHandle) {
+                                    
+                                        onCreateOfferBeforeHandle();
+
+                                    }
+
                                     webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
 
                                     options.offer_to_receive_video = true;
@@ -619,6 +625,12 @@ namespace hope {
                                         LOG_ERROR("Failed to initialize peer connection");
 
                                         return;
+                                    }
+
+                                    if (onReceiveOfferBeforeHandle) {
+                                    
+                                        onReceiveOfferBeforeHandle();
+
                                     }
 
                                     std::string sdp(json["sdp"].as_string().c_str());
@@ -791,7 +803,7 @@ namespace hope {
         bool WebRTCManager::writerAudioFrame(int audioTrackId,unsigned char* data, size_t size)
         {
 
-            if ((audioTrackId < 0 && audioTrackId > audioTracks.size()) || audioTracks[audioTrackId]) {
+            if ((audioTrackId < 0 && audioTrackId > audioTracks.size()) || !audioTracks[audioTrackId]) {
 
                 return false;
 
@@ -811,7 +823,7 @@ namespace hope {
         bool WebRTCManager::writerDataChannelData(int dataChannelId, unsigned char* data, size_t size)
         {
 
-            if ((dataChannelId < 0 && dataChannelId > dataChannels.size()) || dataChannels[dataChannelId]) {
+            if ((dataChannelId < 0 && dataChannelId > dataChannels.size()) || !dataChannels[dataChannelId]) {
 
                 return false;
 

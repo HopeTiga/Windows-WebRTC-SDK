@@ -191,6 +191,20 @@ namespace hope {
 
         }
 
+        void WindowsWebRTCManager::setOnCreateOfferBeforeHandle(std::function<void()> handle)
+        {
+            if (webRTCManager) {
+                webRTCManager->onCreateOfferBeforeHandle = handle;
+            }
+        }
+
+        void WindowsWebRTCManager::setOnReceiveOfferBeforeHandle(std::function<void()> handle)
+        {
+            if (webRTCManager) {
+                webRTCManager->onReceiveOfferBeforeHandle = handle;
+            }
+        }
+
         // Account management
         void WindowsWebRTCManager::setAccountId(const char* accountId)
         {
