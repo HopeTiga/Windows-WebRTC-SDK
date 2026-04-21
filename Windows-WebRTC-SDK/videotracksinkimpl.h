@@ -7,19 +7,23 @@ namespace rtc {
 
 class WebRTCManager;
 
+class PeerConnectionManager;
+
 class VideoTrackSinkImpl : public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
 public:
-    VideoTrackSinkImpl(WebRTCManager* manager,int videoTrackId);
+    VideoTrackSinkImpl(WebRTCManager* manager, PeerConnectionManager * peerConnectionManager,std::string videoTrackId);
     ~VideoTrackSinkImpl() override;
 
     void OnFrame(const webrtc::VideoFrame& frame) override;
 
 public:
-    int videoTrackId;// 用于标识视频轨道
+    std::string videoTrackId;// 用于标识视频轨道
 
 private:
 
     WebRTCManager* manager;
+
+    PeerConnectionManager* peerConnectionManager;
 
 };
 

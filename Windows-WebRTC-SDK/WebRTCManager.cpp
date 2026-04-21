@@ -10,6 +10,24 @@
 #include <boost/random/uniform_int_distribution.hpp>
 #include <api/video/i420_buffer.h>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <mstcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#elif defined(__linux__)
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <unistd.h>
+#include <fcntl.h>
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
 
 
 namespace hope {
@@ -17,11 +35,9 @@ namespace hope {
     namespace rtc {
 
         WebRTCManager::WebRTCManager(boost::asio::io_context& ioContext)
-            : connetState(WebRTCConnetState::none)
-            , peerConnection(nullptr)
-            , ioContext(ioContext)
+            : ioContext(ioContext)
             , steadyTimer(ioContext)
-            , msquicSocketClient(nullptr)
+            , asioConcurrentQueue(ioContext.get_executor())
         {
 
             ioContextWorkPtr = std::make_unique<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>(
@@ -31,246 +47,369 @@ namespace hope {
                 this->ioContext.run();
                 }));
 
-            msquicSocketClient = new hope::quic::MsquicSocketClient(ioContext);
-
-            msquicSocketClient->initialize();
-
-        }
-
-        void WebRTCManager::sendSignalingMessage(const boost::json::object& message) {
-
-            if (!msquicSocketClient) return;
-
-            boost::json::object fullMsg;
-            fullMsg["requestType"] = static_cast<int64_t>(WebRTCRequestState::REQUEST);
-            fullMsg["accountId"] = accountId;
-            fullMsg["targetId"] = targetId;
-            fullMsg["state"] = 200;
-
-            for (auto& [key, value] : message) {
-                fullMsg[key] = value;
-            }
-
-            msquicSocketClient->writeJsonAsync(fullMsg);
+            sslContext.set_options(
+                boost::asio::ssl::context::default_workarounds |
+                boost::asio::ssl::context::no_sslv2 |
+                boost::asio::ssl::context::single_dh_use
+            );
 
         }
 
-        void WebRTCManager::processOffer(const std::string& sdp) {
-            if (sdp.empty()) {
-                LOG_ERROR("Received empty SDP offer");
- 
-                return;
-            }
-
-            webrtc::SdpParseError error;
-            std::unique_ptr<webrtc::SessionDescriptionInterface> desc =
-                webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, sdp, &error);
-
-            if (desc) {
-                peerConnection->SetRemoteDescription(
-                    SetRemoteDescriptionObserver::Create().get(), desc.release());
-
-                webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
-                createAnswerObserver = CreateAnswerObserverImpl::Create(this, peerConnection);
-                peerConnection->CreateAnswer(createAnswerObserver.get(), options);
-            }
-            else {
-                LOG_ERROR("Failed to parse offer: %s" , error.description.c_str());
-
-            }
-        }
-
-        void WebRTCManager::processAnswer(const std::string& sdp) {
-            if (sdp.empty()) {
-                LOG_ERROR("Received empty SDP answer");
-     
-                return;
-            }
-
-            webrtc::SdpParseError error;
-            std::unique_ptr<webrtc::SessionDescriptionInterface> desc =
-                webrtc::CreateSessionDescription(webrtc::SdpType::kAnswer, sdp, &error);
-
-            if (desc) {
-                peerConnection->SetRemoteDescription(
-                    SetRemoteDescriptionObserver::Create().get(), desc.release());
-            }
-            else {
-                LOG_ERROR("Failed to parse answer: %s" , error.description.c_str());
-
-            }
-        }
-
-        void WebRTCManager::processIceCandidate(const std::string& candidate,
-            const std::string& mid, int lineIndex) {
-            if (candidate.empty()) {
-                return;
-            }
-
-            webrtc::SdpParseError error;
-            std::unique_ptr<webrtc::IceCandidateInterface> iceCandidate(
-                webrtc::CreateIceCandidate(mid, lineIndex, candidate, &error));
-
-            if (iceCandidate) {
-                peerConnection->AddIceCandidate(iceCandidate.release());
-            }
-            else {
-                LOG_ERROR("Failed to parse ICE candidate: %s" ,error.description.c_str());
-            }
-        }
-
-        int WebRTCManager::createVideoTrack(WebRTCVideoCodec codec, WebRTCVideoPreference preference,webrtc::RtpEncodingParameters rtpEncodingParameters)
+        void WebRTCManager::webrtcAsyncWrite(std::string str)
         {
-            if (!peerConnectionFactory) return -1;
+            asioConcurrentQueue.enqueue(std::move(str));
+        }
 
-            std::string videoTrackIdStr = "videoTrack" + std::to_string(videoTracks.size());
+        void WebRTCManager::closeWebSocket()
+        {
+            boost::system::error_code ec;
 
-            webrtc::scoped_refptr<VideoTrackSourceImpl> videoTrackSourceImpl = webrtc::make_ref_counted<VideoTrackSourceImpl>();
+            asioConcurrentQueue.close();
 
-            webrtc::scoped_refptr<webrtc::VideoTrackInterface> videoTrack = peerConnectionFactory->CreateVideoTrack(videoTrackSourceImpl, videoTrackIdStr);
-
-            if (!videoTrack) {
-                LOG_ERROR("Failed to create video track");
-                return false;
-            }
-
-            std::vector<webrtc::RtpEncodingParameters> encodings;
-
-            webrtc::RtpEncodingParameters encoding;
-
-            encodings.push_back(rtpEncodingParameters);
-
-            std::vector<std::string> videoStreamIds = { videoTrackIdStr };
-
-            auto addTrackResult = peerConnection->AddTrack(videoTrack, videoStreamIds, encodings);
-
-            if (!addTrackResult.ok()) {
-                LOG_ERROR("Failed to add video track: %s", addTrackResult.error().message());
-                return false;
-            }
-
-            webrtc::scoped_refptr<webrtc::RtpSenderInterface> videoSender = addTrackResult.MoveValue();
-
-            // Configure H264 codec
-            auto transceivers = peerConnection->GetTransceivers();
-
-            for (auto& transceiver : transceivers) {
-                if (transceiver->media_type() == webrtc::MediaType::MEDIA_TYPE_VIDEO) {
-
-                    webrtc::RtpCapabilities senderCapabilities = peerConnectionFactory->GetRtpSenderCapabilities(
-                        webrtc::MediaType::MEDIA_TYPE_VIDEO);
-
-                    senderCapabilities.fec.clear();
-
-                    if (senderCapabilities.codecs.empty()) {
-                        continue;
+            // 取消底层 TCP socket
+            if (webSocket) {
+                auto& tcpSocket = webSocket->next_layer().next_layer();
+                tcpSocket.cancel(ec);
+                if (ec) {
+                    LOG_ERROR("WebRTCManager::closeSocket() can't cancel Socket: %s", ec.message().c_str());
+                }
+                // WebSocket 关闭帧
+                if (webSocket->is_open()) {
+                    try {
+                        webSocket->close(boost::beast::websocket::close_code::normal, ec);
                     }
-
-                    std::vector<webrtc::RtpCodecCapability> preferredCodecs;
-
-                    // 根据枚举选择优先编解码器
-                    std::string priorityCodec;
-                    switch (codec) {
-                    case WebRTCVideoCodec::VP9: priorityCodec = "VP9"; break;
-                    case WebRTCVideoCodec::H264: priorityCodec = "H264"; break;
-                    case WebRTCVideoCodec::VP8: priorityCodec = "VP8"; break;
-                    case WebRTCVideoCodec::H265: priorityCodec = "H265"; break;
-                    case WebRTCVideoCodec::AV1: priorityCodec = "AV1"; break;
+                    catch (const std::exception& e) {
+                        LOG_ERROR("WebRTCManager::closeSocket() close WebSocket failed: %s", e.what());
                     }
+                }
 
-                    // 首先添加优先编解码器
-                    bool foundPriorityCodec = false;
-                    for (const auto& codec : senderCapabilities.codecs) {
-                        if (codec.name == priorityCodec) {
-                            preferredCodecs.push_back(codec);
-                            foundPriorityCodec = true;
-                            break;
-                        }
-                    }
-
-                    // 添加其他可用编解码器（排除重复项和辅助编解码器）
-                    for (const auto& codec : senderCapabilities.codecs) {
-                        if (codec.name != priorityCodec) {
-                            preferredCodecs.push_back(codec);
-                        }
-                    }
-
-                    // 验证是否有编解码器可设置
-                    if (preferredCodecs.empty()) {
-                        LOG_ERROR("No valid codecs to set as preferences");
-                        continue;
-                    }
-
-                    // 设置编解码器偏好
-                    auto result = transceiver->SetCodecPreferences(preferredCodecs);
-                    if (!result.ok()) {
-                        LOG_ERROR("Failed to set codec preferences: %s", result.message());
+                // SSL 关闭
+                if (webSocket->next_layer().next_layer().is_open()) {
+                    webSocket->next_layer().shutdown(ec);
+                    webSocket->next_layer().next_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+                    webSocket->next_layer().next_layer().close(ec);
+                    if (ec && ec != boost::asio::error::not_connected) {
+                        LOG_ERROR("WebRTCManager::closeSocket() close Tcp Socket failed: %s", ec.message().c_str());
                     }
                 }
             }
 
-            webrtc::RtpParameters parameters = videoSender->GetParameters();
+            webrtcSignalSocketRuns.store(false);
 
-            if (!parameters.encodings.empty()) {
-
-                parameters.encodings[0] = encoding;
-
-            }
-            else {
-                parameters.encodings = encodings;
-            }
-
-            parameters.degradation_preference = webrtc::DegradationPreference(static_cast<int>(preference));
-
-            auto setParamsResult = videoSender->SetParameters(parameters);
-
-            if (!setParamsResult.ok()) {
-                LOG_ERROR("Failed to set RTP parameters: %s", setParamsResult.message());
-                return -1;
-            }
-
-            int videoTrackId = videoTracks.size();
-
-            videoSenders.emplace_back(std::move(videoSender));
-
-            videoTrackSourceImpls.emplace_back(std::move(videoTrackSourceImpl));
-
-			videoTracks.emplace_back(std::move(videoTrack));
-            
-            return videoTrackId;
+            LOG_INFO("WebRTCManager::WebSocket is close");
         }
 
-        int WebRTCManager::createAudioTrack()
+        void WebRTCManager::setTcpKeepAlive(boost::asio::ip::tcp::socket& sock, int idle, int intvl, int probes)
         {
-            if (!peerConnectionFactory) return -1;
+            int fd = sock.native_handle();
 
-            if (audioTracks.size() > 0) return -1;
+            /* 1. 先打开 SO_KEEPALIVE 通用开关 */
+            int on = 1;
+            setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE,
+                reinterpret_cast<const char*>(&on), sizeof(on));
 
-			std::string audioTrackIdStr = "audioTrack" + std::to_string(audioTracks.size());
+#if defined(__linux__)
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &probes, sizeof(probes));
 
-            webrtc::scoped_refptr<webrtc::AudioTrackInterface> audioTrack = peerConnectionFactory->CreateAudioTrack(audioTrackIdStr, nullptr);
+#elif defined(_WIN32)
+            /* Windows 用毫秒结构体 */
+            struct tcp_keepalive kalive {};
+            kalive.onoff = 1;
+            kalive.keepalivetime = idle * 1000;   // ms
+            kalive.keepaliveinterval = intvl * 1000;   // ms
+            DWORD bytes_returned = 0;
+            WSAIoctl(fd, SIO_KEEPALIVE_VALS,
+                &kalive, sizeof(kalive),
+                nullptr, 0, &bytes_returned, nullptr, nullptr);
 
-            webrtc::RTCErrorOr<webrtc::scoped_refptr<webrtc::RtpSenderInterface>> audioTrackResult = peerConnection->AddTrack(audioTrack, { audioTrackIdStr });
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+            /* macOS / BSD 用秒级 TCP_KEEPALIVE 等选项 */
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, sizeof(idle));   // 同 Linux 的 IDLE
+            /* 间隔与次数在 BSD 上只有一个 TCP_KEEPINTVL，单位秒 */
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+            /* BSD 没有 KEEPCNT，用 TCP_KEEPALIVE 的初始值+间隔推算，效果相近 */
+#else
+#warning "Unsupported platform, TCP keep-alive parameters not tuned"
+#endif
+        }
 
-            if (!audioTrackResult.ok()) {
+        boost::asio::awaitable<void> WebRTCManager::webrtcReceiveCoroutine()
+        {
+            webrtcSignalSocketRuns.store(true);
 
-                LOG_ERROR("Failed to add audio track: %s", audioTrackResult.error().message());
+            try {
 
-                return -1;
+                while (webrtcSignalSocketRuns.load()) {
+
+                    boost::beast::flat_buffer buffer;
+
+                    co_await webSocket->async_read(buffer, boost::asio::use_awaitable);
+
+                    std::string str = boost::beast::buffers_to_string(buffer.data());
+
+                    buffer.consume(buffer.size());
+
+                    if (onReceiveDataHandle) {
+
+                        onReceiveDataHandle(str);
+
+                        continue;
+                    }
+
+                }
+
+            }
+            catch (std::exception& e) {
+
+                LOG_ERROR("WebSocket Connect Error : %s", e.what());
+
+                if (onSignalServerDisConnectHandle) {
+                    onSignalServerDisConnectHandle();
+                }
+
+                releaseSource();
+
+                co_return;
 
             }
 
-            webrtc::scoped_refptr<webrtc::RtpSenderInterface> audioSender = audioTrackResult.MoveValue();
-
-			int audioTrackId = audioTracks.size();
-
-			audioSenders.emplace_back(std::move(audioSender));
-
-			audioTracks.emplace_back(std::move(audioTrack));
-
-            return audioTrackId;
         }
 
+        boost::asio::awaitable<void> WebRTCManager::webrtcWriteCoroutine()
+        {
+            try {
+
+                while (webrtcSignalSocketRuns.load()) {
+
+                    std::optional<std::string> optional = co_await asioConcurrentQueue.dequeue();
+
+                    if (optional.has_value()) {
+
+                        std::string str = optional.value();
+
+                        co_await webSocket->async_write(boost::asio::buffer(str), boost::asio::use_awaitable);
+
+                    }
+                    else {
+
+                        break;
+                    }
+
+                    if (!webrtcSignalSocketRuns.load()) break;
+
+                }
+
+            }
+            catch (const std::exception& e) {
+
+                LOG_ERROR("Writer coroutine unhandled exception: %s", e.what());
+
+            }
+            catch (...) {
+
+                LOG_ERROR("Writer coroutine unknown exception");
+
+            }
+            co_return;
+        }
+
+        std::string WebRTCManager::createPeerConnectionFactory(std::unique_ptr<webrtc::VideoEncoderFactory> videoEncoderFactory, std::unique_ptr<webrtc::VideoDecoderFactory> videoDecoderFactory, webrtc::scoped_refptr<webrtc::AudioEncoderFactory> audioEncoderFactory, webrtc::scoped_refptr<webrtc::AudioDecoderFactory> audioDecoderFactory)
+        {
+            webrtc::InitializeSSL();
+
+            std::unique_ptr<webrtc::Thread> networkThread = webrtc::Thread::CreateWithSocketServer();
+            if (!networkThread) {
+                LOG_ERROR("Failed to create network thread");
+                return std::string();
+            }
+
+            networkThread->SetName("network_thread", nullptr);
+            if (!networkThread->Start()) {
+                LOG_ERROR("Failed to start network thread");
+                return std::string();
+            }
+
+            std::unique_ptr<webrtc::Thread>  workerThread = webrtc::Thread::Create();
+            if (!workerThread) {
+                LOG_ERROR("Failed to create worker thread");
+                return std::string();
+            }
+            workerThread->SetName("worker_thread", nullptr);
+            if (!workerThread->Start()) {
+                LOG_ERROR("Failed to start worker thread");
+                return std::string();
+            }
+
+            std::unique_ptr<webrtc::Thread> signalingThread = webrtc::Thread::Create();
+            if (!signalingThread) {
+                LOG_ERROR("Failed to create signaling thread");
+                return std::string();
+            }
+            signalingThread->SetName("signaling_thread", nullptr);
+            if (!signalingThread->Start()) {
+                LOG_ERROR("Failed to start signaling thread");
+                return std::string();
+            }
+
+            if (!audioDeviceModuleImpl) {
+            
+                audioDeviceModuleImpl = AudioDeviceModuleImpl::Create();
+
+            }
+
+            if (videoEncoderFactory == nullptr) videoEncoderFactory = webrtc::CreateBuiltinVideoEncoderFactory();
+
+            if (videoDecoderFactory == nullptr) videoDecoderFactory = webrtc::CreateBuiltinVideoDecoderFactory();
+
+            if (audioEncoderFactory == nullptr) audioEncoderFactory = webrtc::CreateBuiltinAudioEncoderFactory();
+
+            if (audioDecoderFactory == nullptr) audioDecoderFactory = webrtc::CreateBuiltinAudioDecoderFactory();
+
+            webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peerConnectionFactory = webrtc::CreatePeerConnectionFactory(
+                networkThread.get(),
+                workerThread.get(),
+                signalingThread.get(),
+                audioDeviceModuleImpl,
+                audioEncoderFactory,
+                audioDecoderFactory,
+                std::move(videoEncoderFactory),
+                std::move(videoDecoderFactory),
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr
+            );
+
+            if (!peerConnectionFactory) {
+                LOG_ERROR("Failed to create PeerConnectionFactory");
+                return std::string();
+            }
+
+            boost::uuids::random_generator gen;
+
+            std::string peerConnectionFactoryId = boost::uuids::to_string(gen());
+
+			peerConnectionFactorys[peerConnectionFactoryId] = peerConnectionFactory;
+
+			networkThreadMaps[peerConnectionFactoryId] = std::move(networkThread);
+
+			workerThreadMaps[peerConnectionFactoryId] = std::move(workerThread);
+
+			signalingThreadMaps[peerConnectionFactoryId] = std::move(signalingThread);
+            
+            return peerConnectionFactoryId;
+        }
+
+        std::string WebRTCManager::createPeerConnection(std::string peerConnectionFactoryId)
+        {
+
+            if (peerConnectionFactorys.find(peerConnectionFactoryId)== peerConnectionFactorys.end() || !peerConnectionFactorys[peerConnectionFactoryId]) return std::string();
+
+            webrtc::PeerConnectionInterface::RTCConfiguration config;
+            config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
+            config.bundle_policy = webrtc::PeerConnectionInterface::kBundlePolicyMaxBundle;
+            config.rtcp_mux_policy = webrtc::PeerConnectionInterface::kRtcpMuxPolicyRequire;
+            config.continual_gathering_policy = webrtc::PeerConnectionInterface::GATHER_CONTINUALLY;
+
+            config.ice_connection_receiving_timeout = 15000;        // 5秒无数据包则认为断开
+            config.ice_unwritable_timeout = 15000;                  // 3秒无响应则标记为不可写
+            config.ice_inactive_timeout = 15000;                    // 5秒后标记为非活跃
+
+            config.servers = iceServers;
+
+            boost::uuids::random_generator gen;
+
+            std::string peerConnectionId = boost::uuids::to_string(gen());
+
+            std::shared_ptr<PeerConnectionManager> peerConnectionManager = std::make_shared<PeerConnectionManager>(peerConnectionFactorys[peerConnectionFactoryId], peerConnectionId, this);
+
+            if (!peerConnectionManager->createPeerConnection()) return std::string();
+
+			peerConnectionManagers[peerConnectionId] = peerConnectionManager;
+
+            return peerConnectionId;
+        }
+
+        std::string WebRTCManager::createVideoTrack(std::string peerConnectionId, WebRTCVideoCodec codec, WebRTCVideoPreference preference)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return std::string();
+
+			return peerConnectionManagers[peerConnectionId]->createVideoTrack(codec, preference);
+        }
+
+        std::string WebRTCManager::createAudioTrack(std::string peerConnectionId)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return std::string();
+            
+			return peerConnectionManagers[peerConnectionId]->createAudioTrack();
+        }
+
+        std::string WebRTCManager::createDataChannel(std::string peerConnectionId, std::string label)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return std::string();
+
+			return peerConnectionManagers[peerConnectionId]->createDataChannel(label);
+        }
+
+        void WebRTCManager::createOffer(std::string peerConnectionId)
+        {
+			if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return;
+            peerConnectionManagers[peerConnectionId]->createOffer();
+        }
+
+        void WebRTCManager::processAnswer(std::string peerConnectionId, const std::string& sdp)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return;
+
+            peerConnectionManagers[peerConnectionId]->processAnswer(sdp);
+        }
+
+        void WebRTCManager::processOffer(std::string peerConnectionId, const std::string& sdp)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return;
+
+            peerConnectionManagers[peerConnectionId]->processOffer(sdp);
+        }
+
+        void WebRTCManager::processIceCandidate(std::string peerConnectionId,std::string candidate, std::string mid, int mlineIndex)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return;
+
+            peerConnectionManagers[peerConnectionId]->processIceCandidate(candidate,mid, mlineIndex);
+        }
+
+        bool WebRTCManager::releaseSourcePeerConnection(std::string peerConnectionId)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return false;
+
+			peerConnectionManagers[peerConnectionId]->releaseSource();
+
+            return true;
+            
+        }
+
+        bool WebRTCManager::writerVideoFrame(std::string peerConnectionId, std::string videoTrackId, unsigned char* data, size_t size, int width, int height)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return false;
+
+            return peerConnectionManagers[peerConnectionId]->writerVideoFrame(videoTrackId,data,size,width,height);
+        }
+
+        bool WebRTCManager::writerAudioFrame(std::string peerConnectionId, std::string audioTrackId, unsigned char* data, size_t size)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return false;
+
+            return peerConnectionManagers[peerConnectionId]->writerAudioFrame(audioTrackId, data, size);
+        }
+
+        bool WebRTCManager::writerDataChannelData(std::string peerConnectionId, std::string dataChannelId, unsigned char* data, size_t size)
+        {
+            if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return false;
+
+            return peerConnectionManagers[peerConnectionId]->writerDataChannelData(dataChannelId, data, size);
+        }
 
         void WebRTCManager::setAccountId(std::string accountId)
         {
@@ -284,141 +423,12 @@ namespace hope {
 
         void WebRTCManager::setTargetId(std::string targetId)
         {
-			this->targetId = targetId;
+            this->targetId = targetId;
         }
 
         std::string WebRTCManager::getTargetId()
         {
             return this->targetId;
-        }
-
-        bool WebRTCManager::initializePeerConnection() {
-            // Clean up any existing connection first
-            if (peerConnection) {
-                releaseSource();
-            }
-
-            webrtc::InitializeSSL();
-
-            if (!peerConnectionFactory) {
-                networkThread = webrtc::Thread::CreateWithSocketServer();
-                if (!networkThread) {
-                    LOG_ERROR("Failed to create network thread");
-                    return false;
-                }
-                networkThread->SetName("network_thread", nullptr);
-                if (!networkThread->Start()) {
-                    LOG_ERROR("Failed to start network thread");
-                    return false;
-                }
-
-                workerThread = webrtc::Thread::Create();
-                if (!workerThread) {
-                    LOG_ERROR("Failed to create worker thread");
-                    return false;
-                }
-                workerThread->SetName("worker_thread", nullptr);
-                if (!workerThread->Start()) {
-                    LOG_ERROR("Failed to start worker thread");
-                    return false;
-                }
-
-                signalingThread = webrtc::Thread::Create();
-                if (!signalingThread) {
-                    LOG_ERROR("Failed to create signaling thread");
-                    return false;
-                }
-                signalingThread->SetName("signaling_thread", nullptr);
-                if (!signalingThread->Start()) {
-                    LOG_ERROR("Failed to start signaling thread");
-                    return false;
-                }
-
-                audioDeviceModuleImpl = AudioDeviceModuleImpl::Create();
-
-                peerConnectionFactory = webrtc::CreatePeerConnectionFactory(
-                    networkThread.get(),
-                    workerThread.get(),
-                    signalingThread.get(),
-                    audioDeviceModuleImpl,
-                    webrtc::CreateBuiltinAudioEncoderFactory(),
-                    webrtc::CreateBuiltinAudioDecoderFactory(),
-                    webrtc::CreateBuiltinVideoEncoderFactory(),
-                    webrtc::CreateBuiltinVideoDecoderFactory(),
-                    nullptr,
-                    nullptr,
-                    nullptr,
-                    nullptr
-                );
-
-                if (!peerConnectionFactory) {
-                    LOG_ERROR("Failed to create PeerConnectionFactory");
-                    return false;
-                }
-            }
-
-            webrtc::PeerConnectionInterface::RTCConfiguration config;
-            config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
-            config.bundle_policy = webrtc::PeerConnectionInterface::kBundlePolicyMaxBundle;
-            config.rtcp_mux_policy = webrtc::PeerConnectionInterface::kRtcpMuxPolicyRequire;
-            config.continual_gathering_policy = webrtc::PeerConnectionInterface::GATHER_CONTINUALLY;
-
-            config.ice_connection_receiving_timeout = 5000;        // 5秒无数据包则认为断开
-            config.ice_unwritable_timeout = 5000;                  // 3秒无响应则标记为不可写
-            config.ice_inactive_timeout = 5000;                    // 5秒后标记为非活跃
-
-            config.servers = iceServers;
-
-            peerConnectionObserver = std::make_unique<PeerConnectionObserverImpl>(this);
-
-            webrtc::PeerConnectionDependencies pcDependencies(peerConnectionObserver.get());
-
-            auto pcResult = peerConnectionFactory->CreatePeerConnectionOrError(config, std::move(pcDependencies));
-            if (!pcResult.ok()) {
-                LOG_ERROR("Failed to create PeerConnection: %s" , pcResult.error().message());
-                return false;
-            }
-
-            peerConnection = pcResult.MoveValue();
-
-            return true;
-        }
-
-        void WebRTCManager::handleRemoteDisconnect() {
-
-            this->releaseSource();
-
-            this->initializePeerConnection();
-
-            if (this->onRemoteDisConnectHandle) {
-
-                this->onRemoteDisConnectHandle();
-
-            }
-
-        }
-
-        void WebRTCManager::writerAsync(std::string json)
-        {
-
-            if (msquicSocketClient) {
-
-                try {
-
-                    LOG_INFO("writerAsync:%s",json.c_str());
-
-                    boost::json::object jsonObject = boost::json::parse(json).as_object();
-
-                    msquicSocketClient->writeJsonAsync(jsonObject);
-                }
-                catch(std::exception & e){
-                
-                    LOG_INFO("ERROR:%s",e.what());
-
-                }
-
-            }
-
         }
 
         void WebRTCManager::addStunServer(std::string host)
@@ -438,41 +448,11 @@ namespace hope {
         }
 
 
-        int WebRTCManager::createDataChannel()
+        void WebRTCManager::connect(std::string ip)
         {
-            if (!peerConnection) return -1;
 
-            std::unique_ptr<webrtc::DataChannelInit> dataChannelConfig = std::make_unique<webrtc::DataChannelInit>();
-
-			std::string dataChannelIdStr = "dataChannel" + std::to_string(dataChannels.size());
-
-            webrtc::scoped_refptr<webrtc::DataChannelInterface> dataChannel = peerConnection->CreateDataChannel(dataChannelIdStr, dataChannelConfig.get());
-
-            if (!dataChannel) {
-
-                LOG_ERROR("Failed to create data channel");
-
-                return -1;
-
-            }
-
-            int dataChannelId = dataChannels.size();
-
-            std::unique_ptr<DataChannelObserverImpl> dataChannelObserver = std::make_unique<DataChannelObserverImpl>(this, dataChannelId);
-
-            dataChannel->RegisterObserver(dataChannelObserver.get());
-
-			dataChannelObservers.emplace_back(std::move(dataChannelObserver));
-
-            dataChannels.emplace_back(std::move(dataChannel));
-
-            return dataChannelId;
-        }
-
-        void WebRTCManager::connect(std::string ip, std::string registerJson)
-        {
             std::string host = ip;
-            std::string port = "8080"; // 默认端口，你可以根据需要修改
+            std::string port = "443"; // 默认端口，你可以根据需要修改
 
             // 如果 IP 包含端口号（格式：ip:port）
             size_t colonPos = ip.find(':');
@@ -481,234 +461,64 @@ namespace hope {
                 port = ip.substr(colonPos + 1);
             }
 
-            msquicSocketClient->setOnConnectionHandle([this, registerJson](bool isSuccess) {
+            boost::asio::co_spawn(ioContext, [this, host, port]()->boost::asio::awaitable<void> {
 
-                if (isSuccess) {
+                try {
 
-                    boost::json::object jsonObject = boost::json::parse(registerJson).as_object();
+                    if (webSocket) {
 
-                    msquicSocketClient->writeJsonAsync(jsonObject);
-                   
-                }
-                else {
+                        closeWebSocket();
 
+                        webSocket = nullptr;
+
+                    }
+
+                    webSocket = std::make_unique<boost::beast::websocket::stream<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>>(ioContext, sslContext);
+
+                    boost::asio::ip::tcp::resolver resolver(ioContext);
+
+                    auto results = co_await resolver.async_resolve(host, port, boost::asio::use_awaitable);
+
+                    co_await boost::asio::async_connect(
+                        webSocket->next_layer().next_layer(),
+                        results,
+                        boost::asio::use_awaitable
+                    );
+
+                    co_await webSocket->next_layer().async_handshake(
+                        boost::asio::ssl::stream_base::client, boost::asio::use_awaitable);
+
+                    co_await webSocket->async_handshake(host, "/", boost::asio::use_awaitable);
+
+                    asioConcurrentQueue.reset();
 
                     if (onSignalServerConnectHandle) {
+                    
+                        onSignalServerConnectHandle();
 
+                    }
+
+                    setTcpKeepAlive(webSocket->next_layer().next_layer());
+
+                    boost::asio::co_spawn(ioContext, webrtcReceiveCoroutine(), boost::asio::detached);
+
+                    boost::asio::co_spawn(ioContext, webrtcWriteCoroutine(), boost::asio::detached);
+
+                }
+                catch (std::exception& e) {
+
+                    LOG_ERROR("WebSocket Connect Error : %s", e.what());
+
+                    if (onSignalServerDisConnectHandle) {
                         onSignalServerDisConnectHandle();
-
-                    }
-
-                    if (isRemote == false) {
-
-                        return;
-
-                    }
-
-                    isRemote = false;
-
-                    if (onRemoteDisConnectHandle) {
-
-                        onRemoteDisConnectHandle();
-
                     }
 
                     releaseSource();
 
-                    initializePeerConnection();
-
+                    co_return;
                 }
 
-                });
-
-            msquicSocketClient->setOnDataReceivedHandle([this](boost::json::object& json) {
-
-                if (json.contains("requestType")) {
-
-                    int64_t requestType = json["requestType"].as_int64();
-
-                    int64_t responseState = json["state"].as_int64();
-
-                    switch (WebRTCRequestState(requestType))
-                    {
-                    case WebRTCRequestState::REGISTER :
-                    {
-                        if (responseState == 200) {
-
-                            connetState = WebRTCConnetState::connect;
-
-                            if (onSignalServerConnectHandle) {
-                                onSignalServerConnectHandle();
-                            }
-                        }
-                        break;
-                    }
-
-                    case WebRTCRequestState::REQUEST:
-                    {
-                        if (responseState == 200) {
-
-                            if (json.contains("webRTCRemoteState")) {
-
-                                WebRTCRemoteState remoteState = WebRTCRemoteState(json["webRTCRemoteState"].as_int64());
-
-                                if (remoteState == WebRTCRemoteState::masterRemote) {
-
-                                    if (json.contains("bitrate")) {
-
-                                        rtpEncodingParameters.max_bitrate_bps = json["bitrate"].as_int64();
-
-                                        rtpEncodingParameters.min_bitrate_bps = json["bitrate"].as_int64();
-
-                                    }
-
-                                    if (!initializePeerConnection()) {
-
-                                        LOG_ERROR("Failed to initialize peer connection");
-
-                                        return;
-                                    }
-
-                                    if (json.contains("accountId")) {
-                                        targetId = std::string(json["accountId"].as_string().c_str());
-                                    }
-
-                                    if (onCreateOfferBeforeHandle) {
-                                    
-                                        onCreateOfferBeforeHandle();
-
-                                    }
-
-                                    webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
-
-                                    options.offer_to_receive_video = true;
-
-                                    options.offer_to_receive_audio = true;
-
-                                    createOfferObserver = CreateOfferObserverImpl::Create(this, peerConnection);
-
-                                    peerConnection->CreateOffer(createOfferObserver.get(), options);
-
-                                    boost::asio::co_spawn(ioContext, [this]()->boost::asio::awaitable<void> {
-
-                                        steadyTimer.expires_after(std::chrono::seconds(10));
-
-                                        co_await steadyTimer.async_wait(boost::asio::use_awaitable);
-
-                                        LOG_INFO("isRemote:%s", isRemote.load() ? "Yes" : "No");
-
-                                        if (!isRemote.load()) {
-
-                                            releaseSource();
-
-                                            initializePeerConnection();
-
-                                            LOG_INFO("webrtc reInit");
-
-                                        }
-
-                                        }, boost::asio::detached);
-                                }
-
-                                return;
-
-                            }
-
-                            if (json.contains("type")) {
-
-                                std::string type(json["type"].as_string().c_str());
-                                
-                                if (type == "offer") {
-
-                                    if (!initializePeerConnection()) {
-
-                                        LOG_ERROR("Failed to initialize peer connection");
-
-                                        return;
-                                    }
-
-                                    if (onReceiveOfferBeforeHandle) {
-                                    
-                                        onReceiveOfferBeforeHandle();
-
-                                    }
-
-                                    std::string sdp(json["sdp"].as_string().c_str());
-
-                                    processOffer(sdp);
-                                }
-
-                                else if (type == "answer") {
-                                    std::string sdp(json["sdp"].as_string().c_str());
-                                    processAnswer(sdp);
-                                }
-                                else if (type == "candidate") {
-                                    std::string candidateStr(json["candidate"].as_string().c_str());
-                                    std::string mid = json.contains("mid") ? std::string(json["mid"].as_string().c_str()) : "";
-                                    int lineIndex = json.contains("mlineIndex") ? json["mlineIndex"].as_int64() : 0;
-
-                                    if (peerConnection) {
-                                        processIceCandidate(candidateStr, mid, lineIndex);
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-
-                    case WebRTCRequestState::RESTART:
-                    { 
-
-                        if (responseState == 200) {
-
-                            if (msquicSocketClient && msquicSocketClient->isConnected()) {
-
-                                releaseSource();
-
-                                initializePeerConnection();
-
-                                boost::json::object request;
-
-                                request["requestType"] = static_cast<int64_t>(WebRTCRequestState::RESTART);
-
-                                request["accountId"] = accountId;
-
-                                request["targetId"] = targetId;
-
-                                request["state"] = 200;
-
-                                request["remoteState"] = "Ready";
-
-                                msquicSocketClient->writeJsonAsync(request);
-
-                            }
-                        }
-                        break;
-                    }
-
-                    case WebRTCRequestState::STOPREMOTE:
-                    {
-                        if (responseState == 200) {
-                            if (this->isRemote) {
-                                if (onRemoteDisConnectHandle) {
-                                    onRemoteDisConnectHandle();
-                                }
-                                releaseSource();
-                                initializePeerConnection();
-                            }
-                        }
-                        break;
-                    }
-
-                    default:
-                        // 可选：记录未知类型或忽略
-                        break;
-                    }
-                }
-
-                });
-
-            msquicSocketClient->connect(host, std::stoi(port));
+                }, boost::asio::detached);
 
         }
 
@@ -720,14 +530,9 @@ namespace hope {
         void WebRTCManager::disConnect()
         {
 
-            if (msquicSocketClient && msquicSocketClient->isConnected()) {
-
-                msquicSocketClient->disconnect();
-            }
+            closeWebSocket();
 
             releaseSource();
-
-            connetState = WebRTCConnetState::none;
 
             if (onSignalServerDisConnectHandle) {
 
@@ -737,227 +542,83 @@ namespace hope {
 
         }
 
-        void WebRTCManager::disConnectRemote()
-        {
-            releaseSource();
-
-            initializePeerConnection();
-
-            if (msquicSocketClient && msquicSocketClient->isConnected()) {
-                boost::json::object message;
-                message["accountId"] = this->accountId;
-                message["targetId"] = this->targetId;
-                message["requestType"] = static_cast<int64_t>(WebRTCRequestState::STOPREMOTE);
-
-                msquicSocketClient->writeJsonAsync(message);
-            }
-        }
-
-        bool WebRTCManager::writerVideoFrame(int videoTrackId,unsigned char* data, size_t size, int width, int height)
-        {
-            if ((videoTrackId < -1 && videoTrackId > videoTracks.size()) || !videoTracks[videoTrackId] || !data || size == 0) {
-                return false;
-            }
-
-            size_t expectedSize = width * height * 3 / 2;
-            if (size != expectedSize) {
-                return false;
-            }
-
-            webrtc::scoped_refptr<webrtc::I420Buffer> i420Buffer =
-                webrtc::I420Buffer::Create(width, height);
-
-            if (!i420Buffer) {
-                return false;
-            }
-
-            const int ySize = width * height;
-            const int uvWidth = (width + 1) / 2;
-            const int uvHeight = (height + 1) / 2;
-            const int uvSize = uvWidth * uvHeight;
-
-            memcpy(i420Buffer->MutableDataY(), data, ySize);
-            memcpy(i420Buffer->MutableDataU(), data + ySize, uvSize);
-            memcpy(i420Buffer->MutableDataV(), data + ySize + uvSize, uvSize);
-
-            int64_t timestampUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-
-            webrtc::VideoFrame frame = webrtc::VideoFrame::Builder()
-                .set_video_frame_buffer(i420Buffer)
-                .set_timestamp_us(timestampUs)
-                .build();
-
-            if (videoTrackSourceImpls[videoTrackId]) {
-
-                videoTrackSourceImpls[videoTrackId]->PushFrame(frame);
-
-                return true;
-
-            }
-
-            return false;
-
-        }
-
-        bool WebRTCManager::writerAudioFrame(int audioTrackId,unsigned char* data, size_t size)
-        {
-
-            if ((audioTrackId < 0 && audioTrackId > audioTracks.size()) || !audioTracks[audioTrackId]) {
-
-                return false;
-
-            }
-
-            if (audioDeviceModuleImpl) {
-            
-				audioDeviceModuleImpl->PushAudioData(data, size);
-
-                return true;
-
-            }
-
-            return false;
-        }
-
-        bool WebRTCManager::writerDataChannelData(int dataChannelId, unsigned char* data, size_t size)
-        {
-
-            if ((dataChannelId < 0 && dataChannelId > dataChannels.size()) || !dataChannels[dataChannelId]) {
-
-                return false;
-
-            }
-
-            if (!dataChannels[dataChannelId]) {
-
-                LOG_ERROR("dataChannel is null");
-
-                delete[] data;
-
-                return false;
-            }
-
-            if (!data) {
-
-                LOG_INFO("data is nullptr");
-
-                return false;
-
-            }
-
-            webrtc::DataBuffer buffer(webrtc::CopyOnWriteBuffer(data, size), true);
-
-            dataChannels[dataChannelId]->SendAsync(buffer, [this](webrtc::RTCError error) {
-
-                if (error.type() != webrtc::RTCErrorType::NONE){
-
-                    LOG_ERROR("Failed to send data on DataChannel: %s", error.message());
-
-                }
-
-            });
-
-            return true;
-
-        }
-
         // Add releaseSource implementation
         void WebRTCManager::releaseSource() {
-
-            for (auto& videoSink : videoTrackSinks) {
-            
-                if (videoSink) {
-
-                    if (videoTracks[videoSink->videoTrackId]) {
-                    
-						videoTracks[videoSink->videoTrackId]->RemoveSink(videoSink.get());
-
-                    }
-
-                    videoSink = nullptr;
-
-                }
-
-            }
-
-            if (peerConnection) {
-                peerConnection->Close();
-                peerConnection = nullptr;
-            }
-
-            if (peerConnectionObserver) {
-                peerConnectionObserver.reset();
-            }
-
-            dataChannelObservers.clear();
-
-            if (createOfferObserver) {
-                createOfferObserver = nullptr;
-            }
-
-            if (createAnswerObserver) {
-                createAnswerObserver = nullptr;
-            }
-
-            videoTracks.clear();
-
-            videoSenders.clear();
-
-            videoTrackSourceImpls.clear();
-
-			dataChannels.clear();
+            LOG_INFO("WebRTCManager releasing sources...");
 
             isRemote = false;
+
+            // 1. 关闭信令发送队列，打断正在等待的协程
+            asioConcurrentQueue.close();
+
+            // 2. 遍历并安全释放所有的 PeerConnection 资源
+            for (auto& pair : peerConnectionManagers) {
+                if (pair.second) {
+                    // 调用我们刚刚写好的 PeerConnectionManager::releaseSource
+                    pair.second->releaseSource();
+                }
+            }
+            // 清空容器，释放 shared_ptr 引用计数
+            peerConnectionManagers.clear();
+
+            LOG_INFO("WebRTCManager sources released.");
         }
 
 
         void WebRTCManager::Cleanup() {
+            LOG_INFO("WebRTCManager starting cleanup...");
 
-            if (msquicSocketClient) {
+            closeWebSocket();
 
-                delete msquicSocketClient;
+            releaseSource();
 
-                msquicSocketClient = nullptr;
+            peerConnectionFactorys.clear();
 
-            }
-
+            // 4. 释放全局的 AudioDeviceModule
+            // ADM 必须在 Factory 销毁后才能安全释放
             if (audioDeviceModuleImpl) {
-            
                 audioDeviceModuleImpl = nullptr;
-
             }
 
-            ioContext.stop();
+            for (auto& [id, signalThread] : signalingThreadMaps) {
+                if (signalThread) {
+                    signalThread->Quit();
+                }
+            }
 
+            // 2. 退出工作线程
+            for (auto& [id, workerThread] : workerThreadMaps) {
+                if (workerThread) {
+                    workerThread->Quit();
+                }
+            }
+
+            // 3. 退出网络线程
+            for (auto& [id, networkThread] : networkThreadMaps) {
+                if (networkThread) {
+                    networkThread->Quit();
+                }
+            }
+
+            signalingThreadMaps.clear();
+            workerThreadMaps.clear();
+            networkThreadMaps.clear();
+
+            // 6. 停止并回收 Boost.Asio 的 io_context 资源
             if (ioContextWorkPtr) {
                 ioContextWorkPtr.reset();
             }
 
+            if (!ioContext.stopped()) {
+                ioContext.stop();
+            }
+
+            // 等待 Asio 事件循环线程安全退出
             if (ioContextThread.joinable()) {
                 ioContextThread.join();
             }
 
-            releaseSource();
-      
-            // Reset factory
-            if (peerConnectionFactory) {
-                peerConnectionFactory = nullptr;
-            }
-
-            if (networkThread) {
-                networkThread->Quit();
-            }
-
-            if (workerThread) {
-                networkThread->Quit();
-            }
-
-            if (signalingThread) {
-                networkThread->Quit();
-            }
-
-
+            LOG_INFO("WebRTCManager cleanup finished.");
         }
 
     }

@@ -19,62 +19,43 @@
 #include <functional>
 #include <atomic>
 
-#include <api/peer_connection_interface.h>
 #include <api/create_peerconnection_factory.h>
-#include <api/data_channel_interface.h>
-#include <api/media_stream_interface.h>
-#include <api/rtp_receiver_interface.h>
-#include <api/rtp_transceiver_interface.h>
-#include <api/jsep.h>
-#include <api/rtc_error.h>
 #include <api/scoped_refptr.h>
-#include <api/rtc_event_log/rtc_event_log_factory.h>
 #include <api/task_queue/default_task_queue_factory.h>
 #include <api/audio_codecs/builtin_audio_decoder_factory.h>
 #include <api/audio_codecs/builtin_audio_encoder_factory.h>
 #include <api/video_codecs/builtin_video_decoder_factory.h>
 #include <api/video_codecs/builtin_video_encoder_factory.h>
-#include <api/audio/audio_mixer.h>
-#include <api/audio/audio_processing.h>
 #include <rtc_base/thread.h>
 #include <rtc_base/ssl_adapter.h>
 #include <rtc_base/ref_counted_object.h>
-#include <pc/video_track_source.h>
-#include <modules/video_capture/video_capture_factory.h>
-#include <modules/audio_device/include/audio_device.h>
-#include <api/enable_media_with_defaults.h>
-#include <media/base/adapted_video_track_source.h>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/json.hpp>
+#include <boost/asio/ssl.hpp>
+#include <boost/beast/ssl.hpp>
 
-#include "PeerConnectionObserverImpl.h"
-#include "VideoTrackSourceImpl.h"
-#include "AudioDeviceModuleImpl.h"
-#include "DataChannelObserverImpl.h"
-#include "SetDescriptionObserverImpl.h"
-#include "CreateDescriptionObserverImpl.h"
-#include "videotracksinkimpl.h"
+#include "HWebRTC.h"
+#include "PeerConnectionManager.h"
 
-#include "MsquicSocketClient.h"
-#include "LibWebRTC.h"
 #include "Utils.h"
-#include "concurrentqueue.h"
+#include "AsioConcurrentQueue.h"
 
 
 namespace hope {
 
     namespace rtc {
 
-
         class WebRTCManager :public std::enable_shared_from_this<WebRTCManager> {
 
             friend class PeerConnectionObserverImpl;
 
             friend class DataChannelObserverImpl;
+
+			friend class PeerConnectionManager;
 
         public:
 
@@ -84,35 +65,11 @@ namespace hope {
 
             void Cleanup();
 
-            void sendSignalingMessage(const boost::json::object& message);
-
-            void processOffer(const std::string& sdp);
-
-            void processAnswer(const std::string& sdp);
-
-            void processIceCandidate(const std::string& candidate, const std::string& mid, int lineIndex);
-
-            int createVideoTrack(WebRTCVideoCodec codec, WebRTCVideoPreference preference = WebRTCVideoPreference::DISABLED, webrtc::RtpEncodingParameters rtpEncodingParameters = getDefaultRtpEncodingParameters());
-
-			int createAudioTrack();
-
-			int createDataChannel();
-
-            void connect(std::string ip, std::string registerJson);
+            void connect(std::string ip);
 
             void disConnect();
 
-            void disConnectRemote();
-
-            bool writerVideoFrame(int videoTrackId ,unsigned char* data, size_t size, int width, int height);
-
-            bool writerAudioFrame(int audioTrackId,unsigned char* data, size_t size);
-
-            bool writerDataChannelData(int dataChannelId,unsigned char* data, size_t size);
-
-            void writerAsync(std::string json);
-
-            void handleRemoteDisconnect();
+            void webrtcAsyncWrite(std::string json);
 
             void addStunServer(std::string host);
 
@@ -128,48 +85,72 @@ namespace hope {
 
         public:
 
+            std::string createPeerConnectionFactory(std::unique_ptr<webrtc::VideoEncoderFactory> videoEncoderFactory = nullptr
+                , std::unique_ptr<webrtc::VideoDecoderFactory> videoDecoderFactory = nullptr
+                , webrtc::scoped_refptr<webrtc::AudioEncoderFactory> audioEncoderFactory = nullptr
+                , webrtc::scoped_refptr<webrtc::AudioDecoderFactory> audioDecoderFactory = nullptr);
+
+            std::string createPeerConnection(std::string peerConnectionFactoryId);
+
+			std::string createVideoTrack(std::string peerConnectionId, WebRTCVideoCodec codec, WebRTCVideoPreference preference);
+
+			std::string createAudioTrack(std::string peerConnectionId);
+
+			std::string createDataChannel(std::string peerConnectionId,std::string label);
+
+			void createOffer(std::string peerConnectionId);
+
+			void processAnswer(std::string peerConnectionId, const std::string& sdp);
+
+			void processOffer(std::string peerConnectionId, const std::string& sdp);
+
+            void processIceCandidate(std::string peerConnectionId, std::string candidate,std::string mid, int mlineIndex);
+
+            bool releaseSourcePeerConnection(std::string peerConnectionId);
+
+			bool writerVideoFrame(std::string peerConnectionId, std::string videoTrackId, unsigned char* data, size_t size, int width, int height);
+
+			bool writerAudioFrame(std::string peerConnectionId, std::string audioTrackId, unsigned char* data, size_t size);
+
+			bool writerDataChannelData(std::string peerConnectionId, std::string dataChannelId, unsigned char* data, size_t size);
+
+        public:
+
             std::function<void()> onSignalServerConnectHandle;
 
             std::function<void()> onSignalServerDisConnectHandle;
 
-            std::function<void()> onRemoteConnectHandle;
+            std::function<void(std::string)> onRemoteConnectHandle;
 
-            std::function<void()> onRemoteDisConnectHandle;
+            std::function<void(std::string)> onRemoteDisConnectHandle;
 
-            std::function<void(const unsigned char*, size_t, int)> onDataChannelDataHandle;
+            std::function<void(std::string,std::string , const unsigned char*, size_t) > onDataChannelDataHandle;
 
-            std::function<void()> onReInitHandle;
+            std::function<void(std::string,std::string)> onReceiveDataChannel;
 
-            std::function<void(int)> onReceiveDataChannel;
+            std::function<void(std::string,std::string, int)> onReceiveTrack;
 
-            std::function<void(int,int)> onReceiveTrack;
+            std::function<void(std::string,std::string, int, int, const uint8_t*, const uint8_t*, const uint8_t*, int, int, int)> onReceiveVideoFrameHandle;
 
-			std::function<void(int,int, int,const uint8_t *, const uint8_t*, const uint8_t*, int, int, int)> onReceiveVideoFrameHandle;
+            std::function<void(std::string)> onReceiveDataHandle;
 
-            std::function<void()> onCreateOfferBeforeHandle;
+            std::function<void(std::string,std::string)> onOfferHandle;
 
-            std::function<void()> onReceiveOfferBeforeHandle;
+			std::function<void(std::string,std::string)> onAnswerHandle;
+
+			std::function<void(std::string,std::string,std::string, int)> onIceCandidateHandle;
 
         private:
 
-            bool initializePeerConnection();
-
             void releaseSource();
 
-            static webrtc::RtpEncodingParameters getDefaultRtpEncodingParameters() {
+            void closeWebSocket();
 
-                webrtc::RtpEncodingParameters encoding;
-                encoding.active = true;
-                encoding.max_bitrate_bps = 1000000;  // 4 Mbps
-                encoding.min_bitrate_bps = 1000000;  // 1 Mbps
-                encoding.bitrate_priority = 4.0;
-                encoding.max_framerate = 60;
-                encoding.scale_resolution_down_by = 1.0;
-                encoding.scalability_mode = "L1T1";
-                encoding.network_priority = webrtc::Priority::kHigh;
-                return encoding;
-            }
+            void setTcpKeepAlive(boost::asio::ip::tcp::socket& sock, int idle = 0, int intvl = 3, int probes = 3);
 
+            boost::asio::awaitable<void> webrtcReceiveCoroutine();
+
+            boost::asio::awaitable<void> webrtcWriteCoroutine();
 
         private:
 
@@ -179,45 +160,27 @@ namespace hope {
 
             webrtc::RtpEncodingParameters rtpEncodingParameters;
 
-            hope::quic::MsquicSocketClient* msquicSocketClient;
+            std::unique_ptr<boost::beast::websocket::stream<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>> webSocket;
 
-            std::unique_ptr<webrtc::Thread> networkThread;
+            boost::asio::ssl::context sslContext{ boost::asio::ssl::context::tlsv12_client };
 
-            std::unique_ptr<webrtc::Thread> workerThread;
+            AsioConcurrentQueue<std::string> asioConcurrentQueue;
 
-            std::unique_ptr<webrtc::Thread> signalingThread;
+            std::atomic<bool> webrtcSignalSocketRuns{ false };
 
-            webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peerConnection;
+            std::unordered_map<std::string, std::unique_ptr<webrtc::Thread>> networkThreadMaps;
 
-            webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peerConnectionFactory;
+            std::unordered_map<std::string, std::unique_ptr<webrtc::Thread>> workerThreadMaps;
 
-            std::vector<webrtc::scoped_refptr<webrtc::DataChannelInterface>> dataChannels;
+            std::unordered_map<std::string, std::unique_ptr<webrtc::Thread>> signalingThreadMaps;
 
-            std::vector<webrtc::scoped_refptr<webrtc::VideoTrackInterface>> videoTracks;
+            std::unordered_map<std::string, webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>> peerConnectionFactorys;
 
-            std::vector<webrtc::scoped_refptr<webrtc::RtpSenderInterface>> videoSenders;
-
-            std::vector<webrtc::scoped_refptr<webrtc::AudioTrackInterface>> audioTracks;
-
-            std::vector<webrtc::scoped_refptr<webrtc::RtpSenderInterface>> audioSenders;
-
-            std::unique_ptr<PeerConnectionObserverImpl> peerConnectionObserver;
-
-            std::vector<std::unique_ptr<DataChannelObserverImpl>> dataChannelObservers;
-
-            webrtc::scoped_refptr<CreateOfferObserverImpl> createOfferObserver;
-
-            webrtc::scoped_refptr<CreateAnswerObserverImpl> createAnswerObserver;
-
-            std::vector<webrtc::scoped_refptr<VideoTrackSourceImpl>> videoTrackSourceImpls;
-
-            webrtc::scoped_refptr<AudioDeviceModuleImpl> audioDeviceModuleImpl;
-
-			std::vector<std::unique_ptr<VideoTrackSinkImpl>> videoTrackSinks;
+            std::unordered_map<std::string, std::shared_ptr<PeerConnectionManager>> peerConnectionManagers;
 
             std::vector<webrtc::PeerConnectionInterface::IceServer> iceServers;
 
-            std::atomic<WebRTCConnetState> connetState;
+            webrtc::scoped_refptr<AudioDeviceModuleImpl> audioDeviceModuleImpl;
 
             boost::asio::io_context& ioContext;
 

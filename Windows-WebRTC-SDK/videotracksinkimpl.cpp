@@ -5,7 +5,7 @@
 namespace hope {
 namespace rtc {
 
-VideoTrackSinkImpl::VideoTrackSinkImpl(WebRTCManager* manager,int videoTrackId) : manager(manager), videoTrackId(videoTrackId){
+    VideoTrackSinkImpl::VideoTrackSinkImpl(WebRTCManager* manager, PeerConnectionManager* peerConnectionManager, std::string videoTrackId) : manager(manager), peerConnectionManager(peerConnectionManager), videoTrackId(videoTrackId) {
 }
 
 VideoTrackSinkImpl::~VideoTrackSinkImpl() {
@@ -17,7 +17,11 @@ void VideoTrackSinkImpl::OnFrame(const webrtc::VideoFrame& frame) {
 
     webrtc::scoped_refptr<webrtc::I420BufferInterface> buffer = frame.video_frame_buffer()->ToI420();
 
-    manager->onReceiveVideoFrameHandle(videoTrackId,buffer->width(), buffer->height(),buffer->DataY(), buffer->DataU(),buffer->DataV(),buffer->StrideY(), buffer->StrideU(), buffer->StrideV());
+    if (manager->onReceiveVideoFrameHandle) {
+
+        manager->onReceiveVideoFrameHandle(peerConnectionManager->peerConnectionId, videoTrackId, buffer->width(), buffer->height(), buffer->DataY(), buffer->DataU(), buffer->DataV(), buffer->StrideY(), buffer->StrideU(), buffer->StrideV());
+
+    }
 
 }
 

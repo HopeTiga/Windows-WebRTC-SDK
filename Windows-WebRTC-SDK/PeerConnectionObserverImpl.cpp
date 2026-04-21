@@ -2,10 +2,14 @@
 
 #include <boost/json.hpp>
 
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
+
 #include "WebRTCManager.h"
 #include "videotracksinkimpl.h"
 
-#include "LibWebRTC.h"
+#include "HWebRTC.h"
 
 #include "Utils.h"
 
@@ -26,21 +30,22 @@ namespace hope {
 
             if (!manager) return;
 
-            int dataChannelId = manager->dataChannels.size();
-
             if (!dataChannel) {
                 LOG_ERROR("DataChannel is null");
                 return;
 			}
 
-			manager->dataChannels.emplace_back(dataChannel);
+            boost::uuids::random_generator gen;
 
-            manager->dataChannelObservers.emplace_back(
-				std::make_unique<DataChannelObserverImpl>(manager, dataChannelId));
+            std::string dataChannelId = boost::uuids::to_string(gen());
+
+            peerConnectionManager->dataChannels[dataChannelId] = dataChannel;
+
+            peerConnectionManager->dataChannelObserverMaps[dataChannelId] = std::make_unique<DataChannelObserverImpl>(manager,peerConnectionManager, dataChannelId);
 
             if (manager->onReceiveDataChannel) {
             
-				manager->onReceiveDataChannel(dataChannelId);
+				manager->onReceiveDataChannel(peerConnectionManager->peerConnectionId,dataChannelId);
 
             }
 
@@ -61,26 +66,25 @@ namespace hope {
 
                 LOG_INFO("Video track received");
 
-                int videoTrackId = manager->videoTracks.size();
+                boost::uuids::random_generator gen;
+
+                std::string videoTrackId = boost::uuids::to_string(gen());
 
                 receiver->SetJitterBufferMinimumDelay(std::optional<double>(0.00));
 
-                manager->videoTracks.emplace_back(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
+                peerConnectionManager->videoTracks[videoTrackId] = webrtc::scoped_refptr<webrtc::VideoTrackInterface>(
                     static_cast<webrtc::VideoTrackInterface*>(track.release())
+                );
 
-                ));
+                std::unique_ptr<VideoTrackSinkImpl> videoSinkImpl = std::make_unique<VideoTrackSinkImpl>(manager,peerConnectionManager, videoTrackId);
 
-                std::unique_ptr<VideoTrackSinkImpl> videoSinkImpl = std::make_unique<VideoTrackSinkImpl>(manager,videoTrackId);
+                peerConnectionManager->videoTracks[videoTrackId]->AddOrUpdateSink(videoSinkImpl.get(), webrtc::VideoSinkWants());
 
-                manager->videoTracks[videoTrackId]->AddOrUpdateSink(videoSinkImpl.get(), webrtc::VideoSinkWants());
-
-                manager->videoTrackSinks.emplace_back(std::move(videoSinkImpl));
-
-                manager->videoSenders.emplace_back(transceiver->sender());
+                peerConnectionManager->videoTrackSinkMaps[videoTrackId] = std::move(videoSinkImpl);
 
                 if (manager->onReceiveTrack) {
                 
-                    manager->onReceiveTrack(videoTrackId,static_cast<int>(WebRTCTrackType::video));
+                    manager->onReceiveTrack(peerConnectionManager->peerConnectionId, videoTrackId,static_cast<int>(WebRTCTrackType::video));
 
                 }
 
@@ -89,21 +93,21 @@ namespace hope {
 
             if (track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
 
-                LOG_INFO("Video track received");
+                LOG_INFO("Audio track received");
 
                 receiver->SetJitterBufferMinimumDelay(std::optional<double>(0.00));
 
-				int audioTrackId = manager->audioTracks.size();
+                boost::uuids::random_generator gen;
 
-                manager->audioTracks.emplace_back(webrtc::scoped_refptr<webrtc::AudioTrackInterface>(
+                std::string audioTrackId = boost::uuids::to_string(gen());
+
+                peerConnectionManager->audioTracks[audioTrackId] = webrtc::scoped_refptr<webrtc::AudioTrackInterface>(
                     static_cast<webrtc::AudioTrackInterface*>(track.release())
-                ));
-
-                manager->audioSenders.emplace_back(transceiver->sender());
+                );
 
                 if (manager->onReceiveTrack) {
 
-                    manager->onReceiveTrack(audioTrackId, static_cast<int>(WebRTCTrackType::audio));
+                    manager->onReceiveTrack(peerConnectionManager->peerConnectionId,audioTrackId, static_cast<int>(WebRTCTrackType::audio));
 
                 }
 
@@ -129,12 +133,11 @@ namespace hope {
 
             LOG_INFO("candidate mlineIndex: %d", candidate->sdp_mline_index());
 
-            boost::json::object msg;
-            msg["type"] = "candidate";
-            msg["candidate"] = sdp;
-            msg["mid"] = candidate->sdp_mid();
-            msg["mlineIndex"] = candidate->sdp_mline_index();
-            manager->sendSignalingMessage(msg);
+            if (manager->onIceCandidateHandle) {
+            
+				manager->onIceCandidateHandle(peerConnectionManager->peerConnectionId, sdp, candidate->sdp_mid(), candidate->sdp_mline_index());
+
+            }
         }
         void PeerConnectionObserverImpl::OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState newState) {
             switch (newState) {
@@ -142,42 +145,10 @@ namespace hope {
             
                 handle = webrtc::make_ref_counted<hope::rtc::RTCStatsCollectorHandle>();
 
-				manager->peerConnection->GetStats(handle.get());
+                peerConnectionManager->peerConnection->GetStats(handle.get());
 
-                try {
-                    manager->steadyTimer.cancel();
-                    LOG_INFO("Connection successful, timeout timer cancelled.");
-                }
-                catch (const std::exception& e) {
-                    LOG_ERROR("Failed to cancel timer: %s", e.what());
-                }
-                manager->isRemote.store(true);
                 if (manager->onRemoteConnectHandle) {
-                    manager->onRemoteConnectHandle();
-                }
-
-                auto localDesc = manager->peerConnection->local_description();
-                if (localDesc) {
-                    std::string sdp;
-                    localDesc->ToString(&sdp);
-                    // 简单解析SDP找到第一个video编解码器
-                    std::istringstream stream(sdp);
-                    std::string line;
-                    while (std::getline(stream, line)) {
-                        if (line.find("a=rtpmap:") == 0 && line.find("/90000") != std::string::npos) {
-                            // 找到视频编解码器行，提取编解码器名称
-                            size_t spacePos = line.find(' ');
-                            if (spacePos != std::string::npos) {
-                                std::string codecInfo = line.substr(spacePos + 1);
-                                size_t slashPos = codecInfo.find('/');
-                                if (slashPos != std::string::npos) {
-                                    std::string codecName = codecInfo.substr(0, slashPos);
-                                    LOG_INFO("=== Video codec actually being used: %s ===", codecName.c_str());
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    manager->onRemoteConnectHandle(peerConnectionManager->peerConnectionId);
                 }
 
                 break;
@@ -187,8 +158,10 @@ namespace hope {
 
 				LOG_INFO("ICE connection disconnected");
 
-                manager->handleRemoteDisconnect();
-
+                if (manager->onRemoteDisConnectHandle) {
+                    manager->onRemoteDisConnectHandle(peerConnectionManager->peerConnectionId);
+                }
+                
                 break;
 
             }

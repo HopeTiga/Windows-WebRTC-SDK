@@ -46,7 +46,7 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
@@ -68,12 +68,12 @@
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\..\WebRTCSystemLogon-version\WebRTCSystemLogon\webrtc.props" />
+    <Import Project="webrtc-sdk.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>E:\cppPro\WindowsCaptureDemo-version\WindowsCaptureDemo\include\msquic;$(IncludePath)</IncludePath>
-    <LibraryPath>E:\cppPro\WindowsCaptureDemo-version\WindowsCaptureDemo\lib\msquic;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(IncludePath)</IncludePath>
+    <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -126,7 +126,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>msquic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -134,8 +134,7 @@
     <ClCompile Include="CreateDescriptionObserverImpl.cpp" />
     <ClCompile Include="DataChannelObserverImpl.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="MsQuicApi.cpp" />
-    <ClCompile Include="MsquicSocketClient.cpp" />
+    <ClCompile Include="PeerConnectionManager.cpp" />
     <ClCompile Include="PeerConnectionObserverImpl.cpp" />
     <ClCompile Include="RTCStatsCollectorHandle.cpp" />
     <ClCompile Include="SetDescriptionObserverImpl.cpp" />
@@ -146,13 +145,13 @@
     <ClCompile Include="WindowsWebRTCManager.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AsioConcurrentQueue.h" />
     <ClInclude Include="AudioDeviceModuleImpl.h" />
     <ClInclude Include="concurrentqueue.h" />
     <ClInclude Include="CreateDescriptionObserverImpl.h" />
     <ClInclude Include="DataChannelObserverImpl.h" />
-    <ClInclude Include="LibWebRTC.h" />
-    <ClInclude Include="MsQuicApi.h" />
-    <ClInclude Include="MsquicSocketClient.h" />
+    <ClInclude Include="HWebRTC.h" />
+    <ClInclude Include="PeerConnectionManager.h" />
     <ClInclude Include="PeerConnectionObserverImpl.h" />
     <ClInclude Include="RTCStatsCollectorHandle.h" />
     <ClInclude Include="SetDescriptionObserverImpl.h" />

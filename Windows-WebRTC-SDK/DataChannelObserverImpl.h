@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include <string>
 #include <api/data_channel_interface.h>
 
 namespace hope {
@@ -8,11 +9,13 @@ namespace hope {
 	
 		class WebRTCManager;
 
+		class PeerConnectionManager;
+
 		class DataChannelObserverImpl : public webrtc::DataChannelObserver {
 
 		public:
 
-			DataChannelObserverImpl(WebRTCManager * manager,int dataChannelId);
+			DataChannelObserverImpl(WebRTCManager * manager, PeerConnectionManager * peerConnectionManager,std::string dataChannelId);
 
 			// The data channel state have changed.
 			void OnStateChange() ;
@@ -23,7 +26,9 @@ namespace hope {
 
 			WebRTCManager* manager;
 
-			int dataChannelId;
+			PeerConnectionManager* peerConnectionManager;
+
+			std::string dataChannelId;
 
 		};
 

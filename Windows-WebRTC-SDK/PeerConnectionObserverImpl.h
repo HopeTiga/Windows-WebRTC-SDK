@@ -10,11 +10,13 @@ namespace hope {
 
         class WebRTCManager;
 
+        class PeerConnectionManager;
+
         class PeerConnectionObserverImpl : public webrtc::PeerConnectionObserver {
 
         public:
 
-            explicit PeerConnectionObserverImpl(WebRTCManager* manager) : manager(manager) {}
+            explicit PeerConnectionObserverImpl(WebRTCManager* manager,PeerConnectionManager * peerConnectionManager) : manager(manager), peerConnectionManager(peerConnectionManager){}
 
             void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState newState) override;
 
@@ -62,6 +64,8 @@ namespace hope {
         private:
 
             WebRTCManager* manager;
+
+            PeerConnectionManager* peerConnectionManager;
 
             webrtc::scoped_refptr<hope::rtc::RTCStatsCollectorHandle> handle;
 
