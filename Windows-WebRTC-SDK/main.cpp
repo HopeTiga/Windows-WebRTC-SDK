@@ -84,9 +84,40 @@ int main()
 
             mgr->webrtcAsyncWrite(boost::json::serialize(jsonObject).c_str());
 
+            jsonObject["requestType"] = 1;
+
+            jsonObject["accountId"] = mgr->getAccountId();
+
+            jsonObject["targetId"] = mgr->getTargetId();
+
+            jsonObject["sdp"] = sdp;
+
+            jsonObject["type"] = "answer";
+
+            mgr->webrtcAsyncWrite(boost::json::serialize(jsonObject).c_str());
+
         }
 
         });
+
+    webrtcManager->setOnIceCandidateHandle([weakMgr](std::string peerConnectionId,std::string candidate,std::string mid,int mlineIndex) {
+        
+        if (auto mgr = weakMgr.lock()) {
+
+            boost::json::object jsonObject;
+
+            jsonObject["requestType"] = 1;
+
+            jsonObject["accountId"] = mgr->getAccountId();
+
+            jsonObject["targetId"] = mgr->getTargetId();
+
+            jsonObject["type"] = "candidate";
+            jsonObject["candidate"] = candidate;
+            jsonObject["mid"] = mid;
+            jsonObject["mlineIndex"] = mlineIndex;
+
+            mgr->webrtcAsyncWrite(boost::json::serialize(jsonObject).c_str());
 
     webrtcManager->setOnIceCandidateHandle([weakMgr](std::string peerConnectionId,std::string candidate,std::string mid,int mlineIndex) {
         
