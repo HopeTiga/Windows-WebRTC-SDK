@@ -486,13 +486,29 @@ namespace hope {
 
                     boost::asio::ip::tcp::resolver resolver(ioContext);
 
-                                std::string type(json["type"].as_string().c_str());
-                                
-                                if (type == "offer") {
+                    auto results = co_await resolver.async_resolve(
+                        host, port,
+                        boost::asio::cancel_after(RESOLVE_TIMEOUT, boost::asio::use_awaitable)
+                    );
 
-                                    if (!initializePeerConnection()) {
+                    // 2. TCP 连接（带超时）
+                    co_await boost::asio::async_connect(
+                        webSocket->next_layer().next_layer(),
+                        results,
+                        boost::asio::cancel_after(CONNECT_TIMEOUT, boost::asio::use_awaitable)
+                    );
 
-                                        LOG_ERROR("Failed to initialize peer connection");
+                    // 3. SSL 握手（带超时）
+                    co_await webSocket->next_layer().async_handshake(
+                        boost::asio::ssl::stream_base::client,
+                        boost::asio::cancel_after(SSL_HANDSHAKE_TIMEOUT, boost::asio::use_awaitable)
+                    );
+
+                    // 4. WebSocket 握手（带超时）
+                    co_await webSocket->async_handshake(
+                        host, "/",
+                        boost::asio::cancel_after(WS_HANDSHAKE_TIMEOUT, boost::asio::use_awaitable)
+                    );
 
                     asioConcurrentQueue.reset();
 
