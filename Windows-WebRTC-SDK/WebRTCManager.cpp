@@ -34,6 +34,15 @@ namespace hope {
 
     namespace rtc {
 
+        static constexpr std::chrono::seconds RESOLVE_TIMEOUT{ 5 };
+
+        static constexpr std::chrono::seconds CONNECT_TIMEOUT{ 10 };
+
+        static constexpr std::chrono::seconds SSL_HANDSHAKE_TIMEOUT{ 10 };
+
+        static constexpr std::chrono::seconds WS_HANDSHAKE_TIMEOUT{ 10 };
+
+
         WebRTCManager::WebRTCManager(boost::asio::io_context& ioContext)
             : ioContext(ioContext)
             , steadyTimer(ioContext)
@@ -477,18 +486,29 @@ namespace hope {
 
                     boost::asio::ip::tcp::resolver resolver(ioContext);
 
-                    auto results = co_await resolver.async_resolve(host, port, boost::asio::use_awaitable);
+                    auto results = co_await resolver.async_resolve(
+                        host, port,
+                        boost::asio::cancel_after(RESOLVE_TIMEOUT, boost::asio::use_awaitable)
+                    );
 
+                    // 2. TCP 连接（带超时）
                     co_await boost::asio::async_connect(
                         webSocket->next_layer().next_layer(),
                         results,
-                        boost::asio::use_awaitable
+                        boost::asio::cancel_after(CONNECT_TIMEOUT, boost::asio::use_awaitable)
                     );
 
+                    // 3. SSL 握手（带超时）
                     co_await webSocket->next_layer().async_handshake(
-                        boost::asio::ssl::stream_base::client, boost::asio::use_awaitable);
+                        boost::asio::ssl::stream_base::client,
+                        boost::asio::cancel_after(SSL_HANDSHAKE_TIMEOUT, boost::asio::use_awaitable)
+                    );
 
-                    co_await webSocket->async_handshake(host, "/", boost::asio::use_awaitable);
+                    // 4. WebSocket 握手（带超时）
+                    co_await webSocket->async_handshake(
+                        host, "/",
+                        boost::asio::cancel_after(WS_HANDSHAKE_TIMEOUT, boost::asio::use_awaitable)
+                    );
 
                     asioConcurrentQueue.reset();
 
