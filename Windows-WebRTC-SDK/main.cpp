@@ -118,6 +118,9 @@ int main()
             jsonObject["mlineIndex"] = mlineIndex;
 
             mgr->webrtcAsyncWrite(boost::json::serialize(jsonObject).c_str());
+        }
+
+		});
 
     webrtcManager->setOnIceCandidateHandle([weakMgr](std::string peerConnectionId,std::string candidate,std::string mid,int mlineIndex) {
         
