@@ -84,18 +84,6 @@ int main()
 
             mgr->webrtcAsyncWrite(boost::json::serialize(jsonObject).c_str());
 
-            jsonObject["requestType"] = 1;
-
-            jsonObject["accountId"] = mgr->getAccountId();
-
-            jsonObject["targetId"] = mgr->getTargetId();
-
-            jsonObject["sdp"] = sdp;
-
-            jsonObject["type"] = "answer";
-
-            mgr->webrtcAsyncWrite(boost::json::serialize(jsonObject).c_str());
-
         }
 
         });
@@ -113,37 +101,17 @@ int main()
             jsonObject["targetId"] = mgr->getTargetId();
 
             jsonObject["type"] = "candidate";
+
             jsonObject["candidate"] = candidate;
+
             jsonObject["mid"] = mid;
+
             jsonObject["mlineIndex"] = mlineIndex;
 
             mgr->webrtcAsyncWrite(boost::json::serialize(jsonObject).c_str());
         }
 
 		});
-
-    webrtcManager->setOnIceCandidateHandle([weakMgr](std::string peerConnectionId,std::string candidate,std::string mid,int mlineIndex) {
-        
-        if (auto mgr = weakMgr.lock()) {
-
-            boost::json::object jsonObject;
-
-            jsonObject["requestType"] = 1;
-
-            jsonObject["accountId"] = mgr->getAccountId();
-
-            jsonObject["targetId"] = mgr->getTargetId();
-
-            jsonObject["type"] = "candidate";
-            jsonObject["candidate"] = candidate;
-            jsonObject["mid"] = mid;
-            jsonObject["mlineIndex"] = mlineIndex;
-
-            mgr->webrtcAsyncWrite(boost::json::serialize(jsonObject).c_str());
-
-        }
-
-        });
 
     webrtcManager->setOnReceiveTrack([weakMgr](std::string peerConnectionId, std::string trackId, int trackType) {
         LOG_INFO("Received remote track: PeerConnectionId=%s, TrackId=%s, TrackType=%d",
@@ -152,8 +120,60 @@ int main()
 
     webrtcManager->setOnReceiveVideoFrameHandle([weakMgr](std::string peerConnectionId,std::string videoTrackId,int width,int height
         , const uint8_t* dataY, const uint8_t* dataU, const uint8_t* dataV, int widthY, int widthU, int widthV) {
+            
+			static bool firstFrame = true;
+
+            if (firstFrame) {
+
+                LOG_INFO("PeerConnection[%s] received VideoTrack[%s] VideoFrame", peerConnectionId.c_str(), videoTrackId.c_str());
+
+				firstFrame = false;
+
+            }
+
+        });
+
+    webrtcManager->setOnReceiveAudioFrameHandle([weakMgr](std::string peerConnectionId, std::string audioTrackId, const void* pcmData, int bitsPerSample, int sampleRate, size_t numberOfChannels, size_t numberOfFrames) {
+        static bool firstFrame = true;
+        if (firstFrame) {
+            LOG_INFO("PeerConnection[%s] received AudioTrack[%s] AudioFrame: %dHz, %d channels, %d frames",
+                peerConnectionId.c_str(), audioTrackId.c_str(), sampleRate, numberOfChannels, numberOfFrames);
+            firstFrame = false;
+        }
+		});
+
+    webrtcManager->setOnPeerConnectionStateChangeHandle([weakMgr](std::string peerConnectionId, int type) {
+        static const char* stateNames[] = {
+            "New", "Connecting", "Connected", "Disconnected", "Failed", "Closed"
+        };
+
+        const char* name = (type >= 0 && type < 6) ? stateNames[type] : "Unknown";
+        LOG_INFO("PeerConnection[%s] PeerConnection state: %s", peerConnectionId.c_str(), name);
+        });
+
+    webrtcManager->setOnIceConnectionStateChangeHandle([weakMgr](std::string peerConnectionId, int type) {
+        static const char* stateNames[] = {
+            "New",
+            "Checking",
+            "Connected",
+            "Completed",
+            "Failed",
+            "Disconnected",
+            "Closed",
+            "Max"
+        };
+
+        const char* stateName = (type >= 0 && type < 8) ? stateNames[type] : "Unknown";
+        LOG_INFO("PeerConnection[%s] ICE state changed to: %s", peerConnectionId.c_str(), stateName);
+
+        if (type == IceConnectionState::kIceConnectionDisconnected) {
         
-            LOG_INFO("PeerConnection[%s] received VideoTrack[%s] VideoFrame",peerConnectionId.c_str(),videoTrackId.c_str());
+            LOG_INFO("PeerConnection[%s] ICE disconnected, releasing PeerConnection", peerConnectionId.c_str());
+            if (auto mgr = weakMgr.lock()) {
+                mgr->releasePeerConnection(peerConnectionId.c_str());
+			}
+
+        }
 
         });
 
@@ -253,7 +273,7 @@ int main()
             
                 if (auto mgr = weakMgr.lock()) {
                 
-                    peerConnectionFactoryId =   mgr->createPeerConnectionFactory();
+                    peerConnectionFactoryId =   mgr->createPeerConnectionFactory(false);
 
                     if (!peerConnectionFactoryId.empty()) {
                     

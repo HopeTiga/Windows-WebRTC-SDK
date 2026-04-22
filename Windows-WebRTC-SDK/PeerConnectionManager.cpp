@@ -32,12 +32,19 @@ namespace hope {
 
             LOG_INFO("PeerConnectionManager releasing resources for PC: %s", peerConnectionId.c_str());
 
-            // 1. 移除 Video Sink，防止底层解码后继续回调到已经被销毁的 Sink 对象
             for (auto& pair : videoTracks) {
                 auto& trackId = pair.first;
                 auto& track = pair.second;
                 if (track && videoTrackSinkMaps.find(trackId) != videoTrackSinkMaps.end() && videoTrackSinkMaps[trackId]) {
                     track->RemoveSink(videoTrackSinkMaps[trackId].get());
+                }
+            }
+
+            for (auto& pair : audioTracks) {
+                auto& trackId = pair.first;
+                auto& track = pair.second;
+                if (track && audioTrackSinkMaps.find(trackId) != audioTrackSinkMaps.end() && audioTrackSinkMaps[trackId]) {
+                    track->RemoveSink(audioTrackSinkMaps[trackId].get());
                 }
             }
 
@@ -55,12 +62,11 @@ namespace hope {
                 peerConnection->Close();
             }
 
-            // 4. 清空所有的 Map，释放 scoped_refptr 和 unique_ptr 的引用计数
-            // 注意：顺序最好是先清空媒体层，再清空通道层
             videoTrackSinkMaps.clear();
             videoTrackSourceImplMaps.clear();
             videoTracks.clear();
 
+            audioTrackSinkMaps.clear();
             audioTracks.clear();
 
             dataChannelObserverMaps.clear();
@@ -348,7 +354,11 @@ namespace hope {
                 return false;
 			}
 
-            webrtcManager->audioDeviceModuleImpl->PushAudioData(data, size);
+            if (webrtcManager->audioDeviceModuleImpl) {
+
+                webrtcManager->audioDeviceModuleImpl->PushAudioData(data, size);
+
+            }
 
             return true;
         }

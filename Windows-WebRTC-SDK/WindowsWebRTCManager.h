@@ -71,7 +71,7 @@ namespace hope {
              * @return Factory ID（UUID字符串），失败返回空串
              * @note 一个Factory可创建多个PeerConnection，通常一个进程只需一个Factory
              */
-            std::string createPeerConnectionFactory();
+            std::string createPeerConnectionFactory(bool isUseAudioModel = false);
 
             /**
              * @brief 创建PeerConnection（P2P连接实例）
@@ -237,19 +237,22 @@ namespace hope {
              */
             void setOnSignalServerDisConnectHandle(std::function<void()> handle);
 
-            /**
-             * @brief P2P远端连接成功回调
-             * @param handle 参数：peerConnectionId
-             * @note ICE状态变为Connected时触发，此时媒体/DataChannel可开始传输
-             */
-            void setOnRemoteConnectHandle(std::function<void(std::string)> handle);
 
             /**
-             * @brief P2P远端连接断开回调
-             * @param handle 参数：peerConnectionId
-             * @note ICE状态变为Disconnected时触发，可能自动恢复或最终失败
-             */
-            void setOnRemoteDisConnectHandle(std::function<void(std::string)> handle);
+            * @brief PeerConenction状态变化回调
+            * @param std::string peerConnectionId 连接ID
+            * @param int type 状态类型
+            * @note peerConnection状态变化时触发
+            */
+            void setOnPeerConnectionStateChangeHandle(std::function<void(std::string, int)> handle);
+
+            /**
+			* @brief IceConenction状态变化回调
+			* @param std::string peerConnectionId 连接ID
+            * @param int type 状态类型
+            * @note ice状态变化时触发
+            */
+            void setOnIceConnectionStateChangeHandle(std::function<void(std::string,int)> handle);
 
             /**
              * @brief DataChannel收到数据回调
@@ -282,6 +285,16 @@ namespace hope {
              * @warning 回调在WebRTC解码线程执行，禁止阻塞。如需异步处理，拷贝帧数据
              */
             void setOnReceiveVideoFrameHandle(std::function<void(std::string, std::string, int, int, const uint8_t*, const uint8_t*, const uint8_t*, int, int, int)> handle);
+
+            /**
+            * @brief 收到远端音频帧回调
+            * @param handle 参数：(peerConnectionId, audioTrackId, pcmData指针, bitsPerSample, sampleRate, numberOfChannels, numberOfFrames)
+            * @note pcmData 为原始 PCM 数据，格式由 bitsPerSample/sampleRate/numberOfChannels 描述
+            * @note 典型参数：16bit、48000Hz、2声道（立体声），具体以实际协商为准
+            * @warning 回调在 WebRTC 音频线程执行，禁止阻塞。如需异步处理，拷贝 pcmData
+            */
+            void setOnReceiveAudioFrameHandle(std::function<void(std::string, std::string, const void*, int, int, size_t, size_t)> handle);
+
 
             /**
              * @brief WebSocket收到原始数据回调

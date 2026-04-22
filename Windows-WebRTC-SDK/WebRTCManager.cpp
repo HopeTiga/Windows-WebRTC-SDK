@@ -47,6 +47,7 @@ namespace hope {
             : ioContext(ioContext)
             , steadyTimer(ioContext)
             , asioConcurrentQueue(ioContext.get_executor())
+            , audioDeviceModuleImpl(nullptr)
         {
 
             ioContextWorkPtr = std::make_unique<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>(
@@ -224,7 +225,7 @@ namespace hope {
             co_return;
         }
 
-        std::string WebRTCManager::createPeerConnectionFactory(std::unique_ptr<webrtc::VideoEncoderFactory> videoEncoderFactory, std::unique_ptr<webrtc::VideoDecoderFactory> videoDecoderFactory, webrtc::scoped_refptr<webrtc::AudioEncoderFactory> audioEncoderFactory, webrtc::scoped_refptr<webrtc::AudioDecoderFactory> audioDecoderFactory)
+        std::string WebRTCManager::createPeerConnectionFactory(bool isUseAudioModel,std::unique_ptr<webrtc::VideoEncoderFactory> videoEncoderFactory, std::unique_ptr<webrtc::VideoDecoderFactory> videoDecoderFactory, webrtc::scoped_refptr<webrtc::AudioEncoderFactory> audioEncoderFactory, webrtc::scoped_refptr<webrtc::AudioDecoderFactory> audioDecoderFactory)
         {
             webrtc::InitializeSSL();
 
@@ -262,7 +263,7 @@ namespace hope {
                 return std::string();
             }
 
-            if (!audioDeviceModuleImpl) {
+            if (isUseAudioModel && !audioDeviceModuleImpl) {
             
                 audioDeviceModuleImpl = AudioDeviceModuleImpl::Create();
 

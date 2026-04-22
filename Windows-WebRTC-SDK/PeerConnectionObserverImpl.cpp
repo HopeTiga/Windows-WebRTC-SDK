@@ -7,7 +7,8 @@
 #include <boost/uuid/uuid_io.hpp>
 
 #include "WebRTCManager.h"
-#include "videotracksinkimpl.h"
+#include "VideoTrackSinkImpl.h"
+#include "AudioTrackSinkImpl.h"
 
 #include "HWebRTC.h"
 
@@ -105,6 +106,12 @@ namespace hope {
                     static_cast<webrtc::AudioTrackInterface*>(track.release())
                 );
 
+                std::unique_ptr<AudioTrackSinkImpl> audioSinkImpl = std::make_unique<AudioTrackSinkImpl>(manager, peerConnectionManager, audioTrackId);
+
+                peerConnectionManager->audioTracks[audioTrackId]->AddSink(audioSinkImpl.get());
+
+                peerConnectionManager->audioTrackSinkMaps[audioTrackId] = std::move(audioSinkImpl);
+
                 if (manager->onReceiveTrack) {
 
                     manager->onReceiveTrack(peerConnectionManager->peerConnectionId,audioTrackId, static_cast<int>(WebRTCTrackType::audio));
@@ -131,8 +138,6 @@ namespace hope {
                 return;
             }
 
-            LOG_INFO("candidate mlineIndex: %d", candidate->sdp_mline_index());
-
             if (manager->onIceCandidateHandle) {
             
 				manager->onIceCandidateHandle(peerConnectionManager->peerConnectionId, sdp, candidate->sdp_mid(), candidate->sdp_mline_index());
@@ -140,6 +145,13 @@ namespace hope {
             }
         }
         void PeerConnectionObserverImpl::OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState newState) {
+
+            if (manager->onIceConnectionStateChangeHandle) {
+            
+                manager->onIceConnectionStateChangeHandle(peerConnectionManager->peerConnectionId, static_cast<int>(newState));
+
+            }
+
             switch (newState) {
             case webrtc::PeerConnectionInterface::kIceConnectionConnected: {
             
@@ -147,46 +159,37 @@ namespace hope {
 
                 peerConnectionManager->peerConnection->GetStats(handle.get());
 
-                if (manager->onRemoteConnectHandle) {
-                    manager->onRemoteConnectHandle(peerConnectionManager->peerConnectionId);
-                }
 
                 break;
 
             }
             case webrtc::PeerConnectionInterface::kIceConnectionDisconnected: {
-
-				LOG_INFO("ICE connection disconnected");
-
-                if (manager->onRemoteDisConnectHandle) {
-                    manager->onRemoteDisConnectHandle(peerConnectionManager->peerConnectionId);
-                }
-                
                 break;
-
             }
 
             case webrtc::PeerConnectionInterface::kIceConnectionFailed:
-                LOG_ERROR("ICE connection failed");
                 break;
             default:
                 break;
             }
         }
         void PeerConnectionObserverImpl::OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState newState) {
+
+            if (manager->onPeerConnectionStateChangeHandle) {
+            
+                manager->onPeerConnectionStateChangeHandle(peerConnectionManager->peerConnectionId, static_cast<int>(newState));
+
+            }
+
             switch (newState) {
             case webrtc::PeerConnectionInterface::PeerConnectionState::kConnected: {
-                LOG_INFO("Peer connection established");
                 break;
             }
             case webrtc::PeerConnectionInterface::PeerConnectionState::kDisconnected: {
-    
-                LOG_ERROR("Peer connection disconnected");
+
                 break;
             }
             case webrtc::PeerConnectionInterface::PeerConnectionState::kFailed: {
-
-                LOG_ERROR("Peer connection failed");
                 break;
             }
             case webrtc::PeerConnectionInterface::PeerConnectionState::kClosed: {

@@ -16,6 +16,27 @@ enum class WebRTCRemoteState {
     followerRemote = 2,
 };
 
+enum class PeerConnectionState {
+    kNew,
+    kConnecting,
+    kConnected,
+    kDisconnected,
+    kFailed,
+    kClosed,
+};
+
+enum IceConnectionState {
+    kIceConnectionNew,
+    kIceConnectionChecking,
+    kIceConnectionConnected,
+    kIceConnectionCompleted,
+    kIceConnectionFailed,
+    kIceConnectionDisconnected,
+    kIceConnectionClosed,
+    kIceConnectionMax,
+};
+
+
 enum class WebRTCRequestState {
     REGISTER = 0,
     REQUEST = 1,

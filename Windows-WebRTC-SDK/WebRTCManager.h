@@ -85,7 +85,7 @@ namespace hope {
 
         public:
 
-            std::string createPeerConnectionFactory(std::unique_ptr<webrtc::VideoEncoderFactory> videoEncoderFactory = nullptr
+            std::string createPeerConnectionFactory(bool isUseAudioModel = false,std::unique_ptr<webrtc::VideoEncoderFactory> videoEncoderFactory = nullptr
                 , std::unique_ptr<webrtc::VideoDecoderFactory> videoDecoderFactory = nullptr
                 , webrtc::scoped_refptr<webrtc::AudioEncoderFactory> audioEncoderFactory = nullptr
                 , webrtc::scoped_refptr<webrtc::AudioDecoderFactory> audioDecoderFactory = nullptr);
@@ -120,10 +120,6 @@ namespace hope {
 
             std::function<void()> onSignalServerDisConnectHandle;
 
-            std::function<void(std::string)> onRemoteConnectHandle;
-
-            std::function<void(std::string)> onRemoteDisConnectHandle;
-
             std::function<void(std::string,std::string , const unsigned char*, size_t) > onDataChannelDataHandle;
 
             std::function<void(std::string,std::string)> onReceiveDataChannel;
@@ -132,6 +128,8 @@ namespace hope {
 
             std::function<void(std::string,std::string, int, int, const uint8_t*, const uint8_t*, const uint8_t*, int, int, int)> onReceiveVideoFrameHandle;
 
+			std::function<void(std::string, std::string, const void*, int, int, size_t, size_t)> onReceiveAudioFrameHandle;
+
             std::function<void(std::string)> onReceiveDataHandle;
 
             std::function<void(std::string,std::string)> onOfferHandle;
@@ -139,6 +137,10 @@ namespace hope {
 			std::function<void(std::string,std::string)> onAnswerHandle;
 
 			std::function<void(std::string,std::string,std::string, int)> onIceCandidateHandle;
+
+            std::function<void(std::string, int)> onPeerConnectionStateChangeHandle;
+
+			std::function<void(std::string, int)> onIceConnectionStateChangeHandle;
 
         private:
 

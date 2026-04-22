@@ -24,10 +24,10 @@ namespace hope {
             if (webRTCManager) webRTCManager->disConnect();
         }
 
-        std::string WindowsWebRTCManager::createPeerConnectionFactory()
+        std::string WindowsWebRTCManager::createPeerConnectionFactory(bool isUseAudioModel)
         {
             if (!webRTCManager) return std::string();
-            return webRTCManager->createPeerConnectionFactory();
+            return webRTCManager->createPeerConnectionFactory(isUseAudioModel);
         }
 
         std::string WindowsWebRTCManager::createPeerConnection(const char* peerConnectionFactoryId)
@@ -149,14 +149,14 @@ namespace hope {
             if (webRTCManager) webRTCManager->onSignalServerDisConnectHandle = std::move(handle);
         }
 
-        void WindowsWebRTCManager::setOnRemoteConnectHandle(std::function<void(std::string)> handle)
+        void WindowsWebRTCManager::setOnPeerConnectionStateChangeHandle(std::function<void(std::string, int)> handle)
         {
-            if (webRTCManager) webRTCManager->onRemoteConnectHandle = std::move(handle);
+            if (webRTCManager) webRTCManager->onPeerConnectionStateChangeHandle = std::move(handle);
         }
 
-        void WindowsWebRTCManager::setOnRemoteDisConnectHandle(std::function<void(std::string)> handle)
+        void WindowsWebRTCManager::setOnIceConnectionStateChangeHandle(std::function<void(std::string, int)> handle)
         {
-            if (webRTCManager) webRTCManager->onRemoteDisConnectHandle = std::move(handle);
+            if (webRTCManager) webRTCManager->onIceConnectionStateChangeHandle = std::move(handle);
         }
 
         void WindowsWebRTCManager::setOnDataChannelDataHandle(std::function<void(std::string, std::string, const unsigned char*, size_t)> handle)
@@ -177,6 +177,10 @@ namespace hope {
         void WindowsWebRTCManager::setOnReceiveVideoFrameHandle(std::function<void(std::string, std::string, int, int, const uint8_t*, const uint8_t*, const uint8_t*, int, int, int)> handle)
         {
             if (webRTCManager) webRTCManager->onReceiveVideoFrameHandle = std::move(handle);
+        }
+
+        void WindowsWebRTCManager::setOnReceiveAudioFrameHandle(std::function<void(std::string, std::string, const void*, int, int, size_t, size_t)> handle) {
+			if (webRTCManager) webRTCManager->onReceiveAudioFrameHandle = std::move(handle);
         }
 
         void WindowsWebRTCManager::setOnReceiveDataHandle(std::function<void(std::string)> handle)

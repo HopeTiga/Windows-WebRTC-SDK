@@ -131,6 +131,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="AudioDeviceModuleImpl.cpp" />
+    <ClCompile Include="AudioTrackSinkImpl.cpp" />
     <ClCompile Include="CreateDescriptionObserverImpl.cpp" />
     <ClCompile Include="DataChannelObserverImpl.cpp" />
     <ClCompile Include="main.cpp" />
@@ -139,7 +140,7 @@
     <ClCompile Include="RTCStatsCollectorHandle.cpp" />
     <ClCompile Include="SetDescriptionObserverImpl.cpp" />
     <ClCompile Include="Utils.cpp" />
-    <ClCompile Include="videotracksinkimpl.cpp" />
+    <ClCompile Include="VideoTrackSinkImpl.cpp" />
     <ClCompile Include="VideoTrackSourceImpl.cpp" />
     <ClCompile Include="WebRTCManager.cpp" />
     <ClCompile Include="WindowsWebRTCManager.cpp" />
@@ -147,6 +148,7 @@
   <ItemGroup>
     <ClInclude Include="AsioConcurrentQueue.h" />
     <ClInclude Include="AudioDeviceModuleImpl.h" />
+    <ClInclude Include="AudioTrackSinkImpl.h" />
     <ClInclude Include="concurrentqueue.h" />
     <ClInclude Include="CreateDescriptionObserverImpl.h" />
     <ClInclude Include="DataChannelObserverImpl.h" />
@@ -156,7 +158,7 @@
     <ClInclude Include="RTCStatsCollectorHandle.h" />
     <ClInclude Include="SetDescriptionObserverImpl.h" />
     <ClInclude Include="Utils.h" />
-    <ClInclude Include="videotracksinkimpl.h" />
+    <ClInclude Include="VideoTrackSinkImpl.h" />
     <ClInclude Include="VideoTrackSourceImpl.h" />
     <ClInclude Include="WebRTCManager.h" />
     <ClInclude Include="WindowsWebRTCManager.h" />

@@ -38,7 +38,8 @@
 #include "DataChannelObserverImpl.h"
 #include "SetDescriptionObserverImpl.h"
 #include "CreateDescriptionObserverImpl.h"
-#include "videotracksinkimpl.h"
+#include "VideoTrackSinkImpl.h"
+#include "AudioTrackSinkImpl.h"
 
 
 namespace hope {
@@ -118,6 +119,8 @@ namespace hope {
             std::unordered_map<std::string, webrtc::scoped_refptr<VideoTrackSourceImpl>> videoTrackSourceImplMaps;
 
             std::unordered_map<std::string, std::unique_ptr<VideoTrackSinkImpl>> videoTrackSinkMaps;
+
+            std::unordered_map<std::string, std::unique_ptr<AudioTrackSinkImpl>> audioTrackSinkMaps;
 
 			std::atomic<bool> isClosed{ false };
 
