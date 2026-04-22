@@ -114,6 +114,18 @@ int main()
 
         });
 
+    webrtcManager->setOnReceiveTrack([weakMgr](std::string peerConnectionId, std::string trackId, int trackType) {
+        LOG_INFO("Received remote track: PeerConnectionId=%s, TrackId=%s, TrackType=%d",
+            peerConnectionId.c_str(), trackId.c_str(), trackType);
+		});
+
+    webrtcManager->setOnReceiveVideoFrameHandle([weakMgr](std::string peerConnectionId,std::string videoTrackId,int width,int height
+        , const uint8_t* dataY, const uint8_t* dataU, const uint8_t* dataV, int widthY, int widthU, int widthV) {
+        
+            LOG_INFO("PeerConnection[%s] received VideoTrack[%s] VideoFrame",peerConnectionId.c_str(),videoTrackId.c_str());
+
+        });
+
     webrtcManager->setOnDataChannelDataHandle([weakMgr](std::string peerConnectionId, std::string dataChannelId, const unsigned char* data, size_t size) {
         if (size < sizeof(short)) return;
 
@@ -220,6 +232,8 @@ int main()
                         
                             LOG_INFO("createPeerConnection Successful");
 
+#ifdef HOPE_RTC_CONTROLLER  
+
 							dataChannelId = mgr->createDataChannel(peerConnectionId.c_str(), "dataChannel");
 
                             if (!dataChannelId.empty()) {
@@ -227,6 +241,21 @@ int main()
 								LOG_INFO("createDataChannel Successful");
 
                             }
+
+#else
+
+                            boost::json::object json;
+
+                            json["requestType"] = 1;
+
+                            json["webRTCRemoteState"] = 1;
+
+                            json["accountId"] = mgr->getAccountId();
+
+                            json["targetId"] = mgr->getTargetId();
+
+                            mgr->webrtcAsyncWrite(boost::json::serialize(json).c_str());
+#endif
 
                         }
                     
@@ -254,5 +283,4 @@ int main()
 
     return 0;
 }
-
 ```
