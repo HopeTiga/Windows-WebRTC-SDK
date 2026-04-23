@@ -1,12 +1,20 @@
-﻿#include <iostream>
+﻿#define HOPE_RTC_CONTROLLER
+#undef WIN32_LEAN_AND_MEAN
+
+#include "WindowsWebRTCManager.h"
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
+
+#include <iostream>
 #include <boost/asio.hpp>
 #include <boost/json.hpp>
 
-#include "WindowsWebRTCManager.h"
 
 #include "HWebRTC.h"
 
 #include "Utils.h"
+
+#include "E:\cppPro\WindowsCaptureDemo-version\WindowsCaptureDemo\MP3AudioReader.h"
 
 std::string peerConnectionFactoryId;
 
@@ -14,7 +22,11 @@ std::string peerConnectionId;
 
 std::string videoTrackId;
 
+std::string audioTrackId;
+
 std::string dataChannelId;
+
+auto mp3AudioReader = std::make_shared<MP3AudioReader>();
 
 int main()
 {
@@ -174,6 +186,63 @@ int main()
 			}
 
         }
+        else if (type == IceConnectionState::kIceConnectionConnected) {
+        
+            LOG_INFO("ICE Connected! Starting Audio Broadcast Thread...");
+
+            std::thread audioThread([weakMgr, peerConnectionId]() {
+                auto mgr = weakMgr.lock();
+                if (!mgr) return;
+
+                // 【核心修复】：强制 Windows 开启 1ms 定时器精度！
+                // 没有这句，下面的 sleep_until 照样不准。
+                timeBeginPeriod(1);
+
+                while (true) {
+                    mp3AudioReader->Initialize(L"E:\\cppPro\\WindowsCaptureDemo-version\\qsx.mp3");
+
+                    // 记录发送的绝对基准时间
+                    auto next_frame_time = std::chrono::steady_clock::now();
+
+                    while (!mp3AudioReader->IsEndOfFile()) {
+                        MP3AudioReader::AudioFrame frame;
+
+                        // 严格读取 10ms
+                        HRESULT hr = mp3AudioReader->ReadOpusFrame(frame, MP3AudioReader::OPUS_FRAME_10MS);
+                        if (hr == S_FALSE) break;
+
+                        if (SUCCEEDED(hr)) {
+                            mgr->writeAudioFrame(peerConnectionId.c_str(),
+                                audioTrackId.c_str(),
+                                reinterpret_cast<unsigned char*>(frame.data.data()),
+                                16,           // bitsPerSample
+                                48000,        // sampleRate 
+                                2,            // 【保持为 1】：因为底层确实配置成了单声道！
+                                frame.sampleCount // 480 
+                            );
+                        }
+
+                        // 【核心修复】：基于绝对时间的精准等待，彻底消除累积误差
+                        next_frame_time += std::chrono::milliseconds(10);
+                        std::this_thread::sleep_until(next_frame_time);
+
+                        // 防御性重置：如果系统卡死导致落后太多，不要疯狂快进补发
+                        if (std::chrono::steady_clock::now() > next_frame_time + std::chrono::milliseconds(50)) {
+                            next_frame_time = std::chrono::steady_clock::now();
+                        }
+                    }
+
+                    LOG_INFO("Audio track finished, restarting...");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                }
+
+                timeEndPeriod(1); // 退出时恢复系统默认时钟精度
+                LOG_INFO("Audio thread exited.");
+                });
+
+            audioThread.detach();
+
+        }
 
         });
 
@@ -290,6 +359,15 @@ int main()
                             if (!dataChannelId.empty()) {
                             
 								LOG_INFO("createDataChannel Successful");
+
+                            }
+
+
+							audioTrackId = mgr->createAudioTrack(peerConnectionId.c_str(), "audioTrack");
+
+                            if (!audioTrackId.empty()) {
+
+                                LOG_INFO("createAudioTrack Successful");
 
                             }
 

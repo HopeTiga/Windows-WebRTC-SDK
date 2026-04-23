@@ -92,9 +92,9 @@ namespace hope {
 
             std::string createPeerConnection(std::string peerConnectionFactoryId);
 
-			std::string createVideoTrack(std::string peerConnectionId, WebRTCVideoCodec codec, WebRTCVideoPreference preference);
+			std::string createVideoTrack(std::string peerConnectionId, std::string label, WebRTCVideoCodec codec, WebRTCVideoPreference preference);
 
-			std::string createAudioTrack(std::string peerConnectionId);
+			std::string createAudioTrack(std::string peerConnectionId, std::string label);
 
 			std::string createDataChannel(std::string peerConnectionId,std::string label);
 
@@ -110,7 +110,11 @@ namespace hope {
 
 			bool writerVideoFrame(std::string peerConnectionId, std::string videoTrackId, unsigned char* data, size_t size, int width, int height);
 
-			bool writerAudioFrame(std::string peerConnectionId, std::string audioTrackId, unsigned char* data, size_t size);
+			bool writerAudioFrame(std::string peerConnectionId, std::string audioTrackId, unsigned char* audioData,
+                int bitsPerSample,
+                int sampleRate,
+                size_t numberOfChannels,
+                size_t numberOfFrames);
 
 			bool writerDataChannelData(std::string peerConnectionId, std::string dataChannelId, unsigned char* data, size_t size);
 

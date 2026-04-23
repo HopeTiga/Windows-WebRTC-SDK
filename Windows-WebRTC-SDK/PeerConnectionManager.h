@@ -34,6 +34,7 @@
 #include "HWebRTC.h"
 #include "PeerConnectionObserverImpl.h"
 #include "VideoTrackSourceImpl.h"
+#include "AudioTrackSourceImpl.h"
 #include "AudioDeviceModuleImpl.h"
 #include "DataChannelObserverImpl.h"
 #include "SetDescriptionObserverImpl.h"
@@ -69,15 +70,19 @@ namespace hope {
 
             bool createPeerConnection();
 
-            std::string createVideoTrack(WebRTCVideoCodec codec, WebRTCVideoPreference preference = WebRTCVideoPreference::DISABLED);
+            std::string createVideoTrack(std::string label, WebRTCVideoCodec codec, WebRTCVideoPreference preference = WebRTCVideoPreference::DISABLED);
 
-            std::string createAudioTrack();
+            std::string createAudioTrack(std::string label);
 
             std::string createDataChannel(std::string label);
 
             bool writerVideoFrame(std::string videoTrackId, unsigned char* data, size_t size, int width, int height);
 
-            bool writerAudioFrame(std::string audioTrackId, unsigned char* data, size_t size);
+            bool writerAudioFrame(std::string audioTrackId, unsigned char* audioData,
+                int bitsPerSample,
+                int sampleRate,
+                size_t numberOfChannels,
+                size_t numberOfFrames);
 
             bool writerDataChannelData(std::string dataChannelId, unsigned char* data, size_t size);
 
@@ -117,6 +122,8 @@ namespace hope {
             std::unordered_map<std::string, std::unique_ptr<DataChannelObserverImpl>> dataChannelObserverMaps;
 
             std::unordered_map<std::string, webrtc::scoped_refptr<VideoTrackSourceImpl>> videoTrackSourceImplMaps;
+
+            std::unordered_map<std::string, webrtc::scoped_refptr<AudioTrackSourceImpl>> audioTrackSourceImplMaps;
 
             std::unordered_map<std::string, std::unique_ptr<VideoTrackSinkImpl>> videoTrackSinkMaps;
 

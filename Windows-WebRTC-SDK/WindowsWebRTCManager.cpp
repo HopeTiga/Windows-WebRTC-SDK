@@ -36,16 +36,16 @@ namespace hope {
             return webRTCManager->createPeerConnection(peerConnectionFactoryId);
         }
 
-        std::string WindowsWebRTCManager::createVideoTrack(const char* peerConnectionId, WebRTCVideoCodec codec, WebRTCVideoPreference preference)
+        std::string WindowsWebRTCManager::createVideoTrack(const char* peerConnectionId, const char* label, WebRTCVideoCodec codec, WebRTCVideoPreference preference)
         {
             if (!webRTCManager) return std::string();
-            return webRTCManager->createVideoTrack(peerConnectionId, codec, preference);
+            return webRTCManager->createVideoTrack(peerConnectionId, label,codec, preference);
         }
 
-        std::string WindowsWebRTCManager::createAudioTrack(const char* peerConnectionId)
+        std::string WindowsWebRTCManager::createAudioTrack(const char* peerConnectionId, const char* label)
         {
             if (!webRTCManager) return std::string();
-            return webRTCManager->createAudioTrack(peerConnectionId);
+            return webRTCManager->createAudioTrack(peerConnectionId, label);
         }
 
         std::string WindowsWebRTCManager::createDataChannel(const char* peerConnectionId, const char* label)
@@ -87,11 +87,15 @@ namespace hope {
                 static_cast<unsigned char*>(data), size, width, height);
         }
 
-        bool WindowsWebRTCManager::writeAudioFrame(std::string peerConnectionId, const char* audioTrackId, void* data, size_t size)
+        bool WindowsWebRTCManager::writeAudioFrame(std::string peerConnectionId, const char* audioTrackId, unsigned char* audioData,
+            int bitsPerSample,
+            int sampleRate,
+            size_t numberOfChannels,
+            size_t numberOfFrames)
         {
             if (!webRTCManager) return false;
             return webRTCManager->writerAudioFrame(peerConnectionId, audioTrackId,
-                static_cast<unsigned char*>(data), size);
+                static_cast<unsigned char*>(audioData), bitsPerSample, sampleRate, numberOfChannels, numberOfFrames);
         }
 
         bool WindowsWebRTCManager::writeDataChannelData(std::string peerConnectionId, const char* dataChannelId, void* data, size_t size)

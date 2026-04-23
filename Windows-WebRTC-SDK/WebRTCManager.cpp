@@ -342,18 +342,18 @@ namespace hope {
             return peerConnectionId;
         }
 
-        std::string WebRTCManager::createVideoTrack(std::string peerConnectionId, WebRTCVideoCodec codec, WebRTCVideoPreference preference)
+        std::string WebRTCManager::createVideoTrack(std::string peerConnectionId, std::string label, WebRTCVideoCodec codec, WebRTCVideoPreference preference)
         {
             if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return std::string();
 
-			return peerConnectionManagers[peerConnectionId]->createVideoTrack(codec, preference);
+			return peerConnectionManagers[peerConnectionId]->createVideoTrack(label,codec, preference);
         }
 
-        std::string WebRTCManager::createAudioTrack(std::string peerConnectionId)
+        std::string WebRTCManager::createAudioTrack(std::string peerConnectionId, std::string label)
         {
             if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return std::string();
             
-			return peerConnectionManagers[peerConnectionId]->createAudioTrack();
+			return peerConnectionManagers[peerConnectionId]->createAudioTrack(label);
         }
 
         std::string WebRTCManager::createDataChannel(std::string peerConnectionId, std::string label)
@@ -396,6 +396,8 @@ namespace hope {
 
 			peerConnectionManagers[peerConnectionId]->releaseSource();
 
+            peerConnectionManagers.erase(peerConnectionId);
+
             return true;
             
         }
@@ -407,11 +409,15 @@ namespace hope {
             return peerConnectionManagers[peerConnectionId]->writerVideoFrame(videoTrackId,data,size,width,height);
         }
 
-        bool WebRTCManager::writerAudioFrame(std::string peerConnectionId, std::string audioTrackId, unsigned char* data, size_t size)
+        bool WebRTCManager::writerAudioFrame(std::string peerConnectionId, std::string audioTrackId, unsigned char* audioData,
+            int bitsPerSample,
+            int sampleRate,
+            size_t numberOfChannels,
+            size_t numberOfFrames)
         {
             if (peerConnectionManagers.find(peerConnectionId) == peerConnectionManagers.end() || !peerConnectionManagers[peerConnectionId]) return false;
 
-            return peerConnectionManagers[peerConnectionId]->writerAudioFrame(audioTrackId, data, size);
+            return peerConnectionManagers[peerConnectionId]->writerAudioFrame(audioTrackId, audioData, bitsPerSample, sampleRate, numberOfChannels, numberOfFrames);
         }
 
         bool WebRTCManager::writerDataChannelData(std::string peerConnectionId, std::string dataChannelId, unsigned char* data, size_t size)

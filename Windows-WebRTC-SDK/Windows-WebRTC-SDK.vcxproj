@@ -130,8 +130,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\WindowsCaptureDemo-version\WindowsCaptureDemo\MP3AudioReader.cpp" />
     <ClCompile Include="AudioDeviceModuleImpl.cpp" />
     <ClCompile Include="AudioTrackSinkImpl.cpp" />
+    <ClCompile Include="AudioTrackSourceImpl.cpp" />
     <ClCompile Include="CreateDescriptionObserverImpl.cpp" />
     <ClCompile Include="DataChannelObserverImpl.cpp" />
     <ClCompile Include="main.cpp" />
@@ -146,9 +148,11 @@
     <ClCompile Include="WindowsWebRTCManager.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\WindowsCaptureDemo-version\WindowsCaptureDemo\MP3AudioReader.h" />
     <ClInclude Include="AsioConcurrentQueue.h" />
     <ClInclude Include="AudioDeviceModuleImpl.h" />
     <ClInclude Include="AudioTrackSinkImpl.h" />
+    <ClInclude Include="AudioTrackSourceImpl.h" />
     <ClInclude Include="concurrentqueue.h" />
     <ClInclude Include="CreateDescriptionObserverImpl.h" />
     <ClInclude Include="DataChannelObserverImpl.h" />

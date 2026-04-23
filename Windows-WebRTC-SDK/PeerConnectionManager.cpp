@@ -67,6 +67,7 @@ namespace hope {
             videoTracks.clear();
 
             audioTrackSinkMaps.clear();
+            audioTrackSourceImplMaps.clear();
             audioTracks.clear();
 
             dataChannelObserverMaps.clear();
@@ -158,23 +159,21 @@ namespace hope {
             return dataChannelId;
         }
 
-        std::string PeerConnectionManager::createVideoTrack(WebRTCVideoCodec codec, WebRTCVideoPreference preference)
+        std::string PeerConnectionManager::createVideoTrack(std::string label,WebRTCVideoCodec codec, WebRTCVideoPreference preference)
         {
 
             if (!peerConnectionFactory || !peerConnection) return std::string();
 
-            std::string videoTrackIdStr = "videoTrack" + std::to_string(videoTracks.size());
-
             webrtc::scoped_refptr<VideoTrackSourceImpl> videoTrackSourceImpl = webrtc::make_ref_counted<VideoTrackSourceImpl>();
 
-            webrtc::scoped_refptr<webrtc::VideoTrackInterface> videoTrack = peerConnectionFactory->CreateVideoTrack(videoTrackSourceImpl, videoTrackIdStr);
+            webrtc::scoped_refptr<webrtc::VideoTrackInterface> videoTrack = peerConnectionFactory->CreateVideoTrack(videoTrackSourceImpl, label);
 
             if (!videoTrack) {
                 LOG_ERROR("Failed to create video track");
                 return std::string();
             }
 
-            std::vector<std::string> videoStreamIds = { videoTrackIdStr };
+            std::vector<std::string> videoStreamIds = { label };
 
             auto addTrackResult = peerConnection->AddTrack(videoTrack, videoStreamIds);
 
@@ -265,17 +264,15 @@ namespace hope {
             return videoTrackId;
         }
 
-        std::string PeerConnectionManager::createAudioTrack()
+        std::string PeerConnectionManager::createAudioTrack(std::string label)
         {
             if (!peerConnectionFactory || !peerConnection) return std::string();
 
-            if (audioTracks.size() > 0) return std::string();
+			webrtc::scoped_refptr<AudioTrackSourceImpl> audioTrackSourceImpl = webrtc::make_ref_counted<AudioTrackSourceImpl>();
 
-            std::string audioTrackIdStr = "audioTrack" + std::to_string(audioTracks.size());
+            webrtc::scoped_refptr<webrtc::AudioTrackInterface> audioTrack = peerConnectionFactory->CreateAudioTrack(label, audioTrackSourceImpl.get());
 
-            webrtc::scoped_refptr<webrtc::AudioTrackInterface> audioTrack = peerConnectionFactory->CreateAudioTrack(audioTrackIdStr, nullptr);
-
-            webrtc::RTCErrorOr<webrtc::scoped_refptr<webrtc::RtpSenderInterface>> audioTrackResult = peerConnection->AddTrack(audioTrack, { audioTrackIdStr });
+            webrtc::RTCErrorOr<webrtc::scoped_refptr<webrtc::RtpSenderInterface>> audioTrackResult = peerConnection->AddTrack(audioTrack, { label });
 
             if (!audioTrackResult.ok()) {
 
@@ -288,6 +285,8 @@ namespace hope {
             boost::uuids::random_generator gen;
 
             std::string audioTrackId = boost::uuids::to_string(gen());
+
+			audioTrackSourceImplMaps[audioTrackId] = std::move(audioTrackSourceImpl);
 
             audioTracks[audioTrackId] = std::move(audioTrack);
 
@@ -341,22 +340,34 @@ namespace hope {
 
         }
 
-        bool PeerConnectionManager::writerAudioFrame(std::string audioTrackId, unsigned char* data, size_t size)
+        bool PeerConnectionManager::writerAudioFrame(std::string audioTrackId, unsigned char* audioData,
+            int bitsPerSample,
+            int sampleRate,
+            size_t numberOfChannels,
+            size_t numberOfFrames)
         {
 
-            if (audioTracks.find(audioTrackId) == audioTracks.end() || !audioTracks[audioTrackId] || !data || size <= 0) {
+            if (audioTracks.find(audioTrackId) == audioTracks.end() || !audioTracks[audioTrackId] || !audioData) {
 
                 return false;
 
             }
 
-            if (!data || size == 0) {
-                return false;
-			}
-
             if (webrtcManager->audioDeviceModuleImpl) {
 
-                webrtcManager->audioDeviceModuleImpl->PushAudioData(data, size);
+                webrtcManager->audioDeviceModuleImpl->PushPcmFrame(
+                    reinterpret_cast<const int16_t*>(audioData),
+                    numberOfFrames * numberOfChannels,
+                    sampleRate,
+                    static_cast<int>(numberOfChannels)
+                );
+
+                return true;
+            }
+
+            if (audioTrackSourceImplMaps[audioTrackId]) {
+            
+				audioTrackSourceImplMaps[audioTrackId]->onData(audioData, bitsPerSample, sampleRate, numberOfChannels, numberOfFrames);
 
             }
 

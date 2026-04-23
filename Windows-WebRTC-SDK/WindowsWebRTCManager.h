@@ -86,22 +86,24 @@ namespace hope {
             /**
              * @brief 创建本地视频发送轨道
              * @param peerConnectionId PeerConnection ID
+             * @param label 通道标识名，如"control"、"file"
              * @param codec 优先编码器（VP8/VP9/H264/H265/AV1），最终由协商决定
              * @param preference 降级策略（MAINTAIN_FRAMERATE/MAINTAIN_RESOLUTION/BALANCED/DISABLED）
              * @return VideoTrack ID（UUID字符串），失败返回空串
              * @note 创建后通过writeVideoFrame推送I420原始帧
              * @see writeVideoFrame
              */
-            std::string createVideoTrack(const char* peerConnectionId, WebRTCVideoCodec codec, WebRTCVideoPreference preference = WebRTCVideoPreference::DISABLED);
+            std::string createVideoTrack(const char* peerConnectionId, const char * label , WebRTCVideoCodec codec, WebRTCVideoPreference preference = WebRTCVideoPreference::DISABLED);
 
             /**
              * @brief 创建本地音频发送轨道
              * @param peerConnectionId PeerConnection ID
+             * @param label 通道标识名，如"control"、"file"
              * @return AudioTrack ID（UUID字符串），失败返回空串
              * @note 每个PeerConnection目前仅支持一个音频轨道
              * @note 音频数据通过AudioDeviceModuleImpl推送，不通过本类write接口
              */
-            std::string createAudioTrack(const char* peerConnectionId);
+            std::string createAudioTrack(const char* peerConnectionId, const char* label);
 
             /**
              * @brief 创建DataChannel（可靠有序传输）
@@ -177,7 +179,11 @@ namespace hope {
              * @return true成功，false参数错误或轨道不存在
              * @note 实际通过AudioDeviceModuleImpl->PushAudioData转发，采样率/通道数由ADM配置决定
              */
-            bool writeAudioFrame(std::string peerConnectionId, const char* audioTrackId, void* data, size_t size);
+            bool writeAudioFrame(std::string peerConnectionId, const char* audioTrackId, unsigned char* audioData,
+                int bitsPerSample,
+                int sampleRate,
+                size_t numberOfChannels,
+                size_t numberOfFrames);
 
             /**
              * @brief 通过DataChannel发送数据
