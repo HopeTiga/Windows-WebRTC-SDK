@@ -387,17 +387,7 @@ namespace hope {
 
                 LOG_ERROR("dataChannel is null");
 
-                delete[] data;
-
                 return false;
-            }
-
-            if (!data) {
-
-                LOG_INFO("data is nullptr");
-
-                return false;
-
             }
 
             webrtc::DataBuffer buffer(webrtc::CopyOnWriteBuffer(data, size), true);
