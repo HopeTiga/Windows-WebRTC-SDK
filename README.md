@@ -195,6 +195,7 @@ graph TB
 #undef WIN32_LEAN_AND_MEAN
 
 #include "WindowsWebRTCManager.h"
+#include "WebRTCVideoFrame.h"
 #include <mmsystem.h>
 #pragma comment(lib, "winmm.lib")
 
@@ -323,8 +324,7 @@ int main()
             peerConnectionId.c_str(), trackId.c_str(), trackType);
 		});
 
-    webrtcManager->setOnReceiveVideoFrameHandle([weakMgr](std::string peerConnectionId,std::string videoTrackId,int width,int height
-        , const uint8_t* dataY, const uint8_t* dataU, const uint8_t* dataV, int widthY, int widthU, int widthV) {
+    webrtcManager->setOnReceiveVideoFrameHandle([weakMgr](std::string peerConnectionId,std::string videoTrackId, hope::rtc::WebRTCVideoFrame webrtcVideoFrame) {
             
 			static bool firstFrame = true;
 
@@ -397,7 +397,6 @@ int main()
                     while (!mp3AudioReader->IsEndOfFile()) {
                         MP3AudioReader::AudioFrame frame;
 
-                        // 严格读取 10ms
                         HRESULT hr = mp3AudioReader->ReadOpusFrame(frame, MP3AudioReader::OPUS_FRAME_10MS);
                         if (hr == S_FALSE) break;
 
@@ -405,15 +404,17 @@ int main()
                             mgr->writeAudioFrame(peerConnectionId.c_str(),
                                 audioTrackId.c_str(),
                                 reinterpret_cast<unsigned char*>(frame.data.data()),
-                                16,  
+                                16,     
                                 48000, 
-                                2,  
-                                frame.sampleCount
+                                2,        
+                                frame.sampleCount 
                             );
                         }
 
+  
                         next_frame_time += std::chrono::milliseconds(10);
                         std::this_thread::sleep_until(next_frame_time);
+
 
                         if (std::chrono::steady_clock::now() > next_frame_time + std::chrono::milliseconds(50)) {
                             next_frame_time = std::chrono::steady_clock::now();
@@ -424,7 +425,7 @@ int main()
                     std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 }
 
-                timeEndPeriod(1); 
+                timeEndPeriod(1);
                 LOG_INFO("Audio thread exited.");
                 });
 
@@ -588,9 +589,9 @@ int main()
 
         });
 
-    webrtcManager->addStunServer("stun:");
+    webrtcManager->addStunServer("");
 
-    webrtcManager->addTurnServer("turn:", "", "");
+    webrtcManager->addTurnServer("", "", "");
 
     webrtcManager->setAccountId("");
 
@@ -602,6 +603,7 @@ int main()
 
     return 0;
 }
+
 ```
 
 ### ZLMediaKit Example Code 
@@ -847,7 +849,7 @@ MainWindow::MainWindow(QWidget* parent)
                               [this, sdp, peerConnectionId]() -> boost::asio::awaitable<void> {
                                   try {
                                       // 1. 定义连接参数
-                                      std::string host = "127.0.0.1";
+                                      std::string host = "61.153.18.148";
                                       // 【修改点】：端口改为 HTTP 默认的 80
                                       std::string port = "80";
 
@@ -860,9 +862,6 @@ MainWindow::MainWindow(QWidget* parent)
                                         std::string target = "/index/api/webrtc?app=live&stream=test&type=play";
 
 #endif
-
-
-
 
                                       // 获取当前协程的执行器 (必须从协程内部获取 executor 传给 stream 和 resolver)
                                       auto executor = co_await boost::asio::this_coro::executor;
@@ -936,47 +935,11 @@ MainWindow::MainWindow(QWidget* parent)
                               boost::asio::detached);
     });
 
-    webrtcManager->setOnReceiveVideoFrameHandle([this](std::string peerConnectionId,std::string videoTrackId,int width,int height
-                                                          , const uint8_t* dataY, const uint8_t* dataU, const uint8_t* dataV, int strideY, int strideU, int strideV) {
-
-        std::shared_ptr<VideoFrame> videoFrame = std::make_shared<VideoFrame>(width, height);
-
-        uint8_t* destRgbData = videoFrame->data.get();
-
-        for (int y = 0; y < height; ++y) {
-            int uvY = y / 2;
-            const uint8_t* yRow = dataY + y * strideY;
-            const uint8_t* uRow = dataU + uvY * strideU;
-            const uint8_t* vRow = dataV + uvY * strideV;
-
-            // 定位到当前行的起始写入位置
-            uint8_t* rgbRow = destRgbData + y * width * 3;
-
-            for (int x = 0; x < width; ++x) {
-                int uvX = x / 2;
-
-                int Y = yRow[x];
-                int U = uRow[uvX] - 128;
-                int V = vRow[uvX] - 128;
-
-                int R = Y + ((360 * V) >> 8);
-                int G = Y - ((88 * U + 184 * V) >> 8);
-                int B = Y + ((455 * U) >> 8);
-
-                // 使用 std::clamp 限制在 0-255，比 max(0, min(255, X)) 更快且语义更直观
-                rgbRow[x * 3]     = static_cast<uint8_t>(std::clamp(R, 0, 255));
-                rgbRow[x * 3 + 1] = static_cast<uint8_t>(std::clamp(G, 0, 255));
-                rgbRow[x * 3 + 2] = static_cast<uint8_t>(std::clamp(B, 0, 255));
-            }
-        }
+    webrtcManager->setOnReceiveVideoFrameHandle([this](std::string peerConnectionId, std::string videoTrackId,hope::rtc::WebRTCVideoFrame webrtcVideoFrame) {
 
         if(ui->widget){
-
-            ui->widget->displayFrame(videoFrame);
-
+            ui->widget->displayFrame(std::move(webrtcVideoFrame));
         }
-
-
     });
 
     webrtcManager->setOnReceiveAudioFrameHandle([this](std::string peerConnectionId, std::string audioTrackId, const void* pcmData, int bitsPerSample, int sampleRate, size_t numberOfChannels, size_t numberOfFrames) {
@@ -1061,6 +1024,5 @@ MainWindow::~MainWindow()
 {
 
 }
-
 
 ```
