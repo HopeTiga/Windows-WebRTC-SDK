@@ -178,7 +178,7 @@ namespace hope {
             if (webRTCManager) webRTCManager->onReceiveTrack = std::move(handle);
         }
 
-        void WindowsWebRTCManager::setOnReceiveVideoFrameHandle(std::function<void(std::string, std::string, int, int, const uint8_t*, const uint8_t*, const uint8_t*, int, int, int)> handle)
+        void WindowsWebRTCManager::setOnReceiveVideoFrameHandle(std::function<void(std::string, std::string, WebRTCVideoFrame)> handle)
         {
             if (webRTCManager) webRTCManager->onReceiveVideoFrameHandle = std::move(handle);
         }

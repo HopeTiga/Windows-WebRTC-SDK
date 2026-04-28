@@ -144,6 +144,7 @@
     <ClCompile Include="Utils.cpp" />
     <ClCompile Include="VideoTrackSinkImpl.cpp" />
     <ClCompile Include="VideoTrackSourceImpl.cpp" />
+    <ClCompile Include="WebRTCVideoFrame.cpp" />
     <ClCompile Include="WebRTCManager.cpp" />
     <ClCompile Include="WindowsWebRTCManager.cpp" />
   </ItemGroup>
@@ -164,6 +165,7 @@
     <ClInclude Include="Utils.h" />
     <ClInclude Include="VideoTrackSinkImpl.h" />
     <ClInclude Include="VideoTrackSourceImpl.h" />
+    <ClInclude Include="WebRTCVideoFrame.h" />
     <ClInclude Include="WebRTCManager.h" />
     <ClInclude Include="WindowsWebRTCManager.h" />
   </ItemGroup>

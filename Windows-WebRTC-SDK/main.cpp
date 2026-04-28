@@ -2,6 +2,7 @@
 #undef WIN32_LEAN_AND_MEAN
 
 #include "WindowsWebRTCManager.h"
+#include "WebRTCVideoFrame.h"
 #include <mmsystem.h>
 #pragma comment(lib, "winmm.lib")
 
@@ -130,8 +131,7 @@ int main()
             peerConnectionId.c_str(), trackId.c_str(), trackType);
 		});
 
-    webrtcManager->setOnReceiveVideoFrameHandle([weakMgr](std::string peerConnectionId,std::string videoTrackId,int width,int height
-        , const uint8_t* dataY, const uint8_t* dataU, const uint8_t* dataV, int widthY, int widthU, int widthV) {
+    webrtcManager->setOnReceiveVideoFrameHandle([weakMgr](std::string peerConnectionId,std::string videoTrackId, hope::rtc::WebRTCVideoFrame webrtcVideoFrame) {
             
 			static bool firstFrame = true;
 

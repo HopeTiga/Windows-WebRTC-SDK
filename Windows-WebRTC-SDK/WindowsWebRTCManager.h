@@ -31,6 +31,9 @@
 
 namespace hope {
     namespace rtc {
+
+        class WebRTCVideoFrame;
+
         class WebRTCManager;
 
         /**
@@ -290,7 +293,7 @@ namespace hope {
              * @note 格式为I420平面，可直接用于渲染或编码
              * @warning 回调在WebRTC解码线程执行，禁止阻塞。如需异步处理，拷贝帧数据
              */
-            void setOnReceiveVideoFrameHandle(std::function<void(std::string, std::string, int, int, const uint8_t*, const uint8_t*, const uint8_t*, int, int, int)> handle);
+            void setOnReceiveVideoFrameHandle(std::function<void(std::string, std::string, WebRTCVideoFrame)> handle);
 
             /**
             * @brief 收到远端音频帧回调

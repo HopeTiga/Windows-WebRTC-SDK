@@ -54,6 +54,18 @@
     <ClCompile Include="PeerConnectionManager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\WindowsCaptureDemo-version\WindowsCaptureDemo\MP3AudioReader.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="AudioTrackSinkImpl.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="AudioTrackSourceImpl.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="WebRTCVideoFrame.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AudioDeviceModuleImpl.h">
@@ -99,6 +111,18 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="PeerConnectionManager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\WindowsCaptureDemo-version\WindowsCaptureDemo\MP3AudioReader.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="AudioTrackSinkImpl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="AudioTrackSourceImpl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="WebRTCVideoFrame.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

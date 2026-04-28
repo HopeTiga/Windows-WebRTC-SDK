@@ -19,7 +19,9 @@ void VideoTrackSinkImpl::OnFrame(const webrtc::VideoFrame& frame) {
 
     if (manager->onReceiveVideoFrameHandle) {
 
-        manager->onReceiveVideoFrameHandle(peerConnectionManager->peerConnectionId, videoTrackId, buffer->width(), buffer->height(), buffer->DataY(), buffer->DataU(), buffer->DataV(), buffer->StrideY(), buffer->StrideU(), buffer->StrideV());
+        WebRTCVideoFrame webrtcVideoFrame(buffer.release());
+
+        manager->onReceiveVideoFrameHandle(peerConnectionManager->peerConnectionId, videoTrackId,std::move(webrtcVideoFrame));
 
     }
 

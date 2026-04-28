@@ -40,6 +40,7 @@
 
 #include "HWebRTC.h"
 #include "PeerConnectionManager.h"
+#include "WebRTCVideoFrame.h"
 
 #include "Utils.h"
 #include "AsioConcurrentQueue.h"
@@ -130,7 +131,7 @@ namespace hope {
 
             std::function<void(std::string,std::string, int)> onReceiveTrack;
 
-            std::function<void(std::string,std::string, int, int, const uint8_t*, const uint8_t*, const uint8_t*, int, int, int)> onReceiveVideoFrameHandle;
+            std::function<void(std::string,std::string, WebRTCVideoFrame)> onReceiveVideoFrameHandle;
 
 			std::function<void(std::string, std::string, const void*, int, int, size_t, size_t)> onReceiveAudioFrameHandle;
 
