@@ -603,3 +603,464 @@ int main()
     return 0;
 }
 ```
+
+### ZLMediaKit Example Code 
+
+```cpp
+#define HOPE_RTC_PUSH
+
+#include "mainwindow.h"
+#include "ui_mainwindow.h"
+#include <QApplication>
+
+#include <boost/json.hpp>
+
+#include "Utils.h"
+
+#include <QMediaCaptureSession>
+#include <QScreenCapture>
+#include <QVideoFrame>
+#include <QVideoSink>
+
+MainWindow::MainWindow(QWidget* parent)
+    : QMainWindow(parent)
+    , ui(new Ui::MainWindow)
+    , webrtcManager(nullptr)
+{
+    ui->setupUi(this);
+
+    ioContextWorkPtr = std::make_unique<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>(boost::asio::make_work_guard(ioContext));
+
+    ioContextThread = std::thread([this](){
+
+        ioContext.run();
+
+    });
+
+    webrtcManager = std::make_shared<hope::rtc::WindowsWebRTCManager>();
+
+    webrtcManager->setOnPeerConnectionStateChangeHandle([this](std::string peerConnectionId, int type) {
+        static const char* stateNames[] = {
+            "New", "Connecting", "Connected", "Disconnected", "Failed", "Closed"
+        };
+
+        const char* name = (type >= 0 && type < 6) ? stateNames[type] : "Unknown";
+        LOG_INFO("PeerConnection[%s] PeerConnection state: %s", peerConnectionId.c_str(), name);
+
+    });
+
+    webrtcManager->setOnIceConnectionStateChangeHandle([this](std::string peerConnectionId, int type){
+
+        if(type == static_cast<int>(IceConnectionState::kIceConnectionConnected)){
+
+#ifdef HOPE_RTC_PUSH
+
+            QMetaObject::invokeMethod(this, [this]() {
+                QScreenCapture *screenCapture = new QScreenCapture(this);
+                // 选择屏幕（若有多个）
+                screenCapture->setScreen(QGuiApplication::primaryScreen());
+
+                // 2. 创建会话
+                QMediaCaptureSession * session = new QMediaCaptureSession(this);
+                session->setScreenCapture(screenCapture);
+
+                // 3. 获取视频帧（直接接入你的 WebRTC SDK）
+                QVideoSink *sink = new QVideoSink(this);
+                session->setVideoOutput(sink);
+
+                screenCapture->start();
+
+                connect(sink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
+                    // 将 QVideoFrame 转换为你的 WebRTC 需要的 I420 格式
+                    if (!frame.isValid()) return;
+
+                    QVideoFrame cloneFrame(frame);
+                    cloneFrame.map(QVideoFrame::ReadOnly);
+
+                    QVideoFrameFormat format = cloneFrame.surfaceFormat();
+                    int width = format.frameWidth();
+                    int height = format.frameHeight();
+                    QVideoFrameFormat::PixelFormat pixelFormat = format.pixelFormat();
+
+                    // 准备存储转换后的 I420 数据
+                    int y_size = width * height;
+                    int uv_size = y_size / 4;
+                    size_t i420_size = y_size + uv_size * 2;  // Y + U + V
+                    std::vector<uint8_t> i420_buffer(i420_size);
+                    uint8_t *y_plane = i420_buffer.data();
+                    uint8_t *u_plane = y_plane + y_size;
+                    uint8_t *v_plane = u_plane + uv_size;
+
+                    bool converted = false;
+
+                    // 情况1：已经是 I420 或 YUV420P（Qt 中常用 Format_YUV420P）
+                    if (pixelFormat == QVideoFrameFormat::Format_YUV420P) {
+                        const uint8_t *src_y = cloneFrame.bits(0);
+                        const uint8_t *src_u = cloneFrame.bits(1);
+                        const uint8_t *src_v = cloneFrame.bits(2);
+                        int stride_y = cloneFrame.bytesPerLine(0);
+                        int stride_u = cloneFrame.bytesPerLine(1);
+                        int stride_v = cloneFrame.bytesPerLine(2);
+
+                        // 逐行复制，去除可能的 stride 填充
+                        for (int row = 0; row < height; ++row) {
+                            memcpy(y_plane + row * width, src_y + row * stride_y, width);
+                        }
+                        for (int row = 0; row < height/2; ++row) {
+                            memcpy(u_plane + row * width/2, src_u + row * stride_u, width/2);
+                            memcpy(v_plane + row * width/2, src_v + row * stride_v, width/2);
+                        }
+                        converted = true;
+                    }
+                    // 情况2：NV12（Format_NV12） -> 转换为 I420
+                    else if (pixelFormat == QVideoFrameFormat::Format_NV12) {
+                        const uint8_t *src_y = cloneFrame.bits(0);
+                        const uint8_t *src_uv = cloneFrame.bits(1);
+                        int stride_y = cloneFrame.bytesPerLine(0);
+                        int stride_uv = cloneFrame.bytesPerLine(1);
+
+                        // 复制 Y 平面
+                        for (int row = 0; row < height; ++row) {
+                            memcpy(y_plane + row * width, src_y + row * stride_y, width);
+                        }
+                        // 分离 UV -> U/V
+                        for (int row = 0; row < height/2; ++row) {
+                            for (int col = 0; col < width/2; ++col) {
+                                u_plane[row * (width/2) + col] = src_uv[row * stride_uv + col*2];
+                                v_plane[row * (width/2) + col] = src_uv[row * stride_uv + col*2 + 1];
+                            }
+                        }
+                        converted = true;
+                    }else if (pixelFormat == QVideoFrameFormat::Format_BGRA8888) {
+                        const uint8_t *src = cloneFrame.bits(0);
+                        int stride = cloneFrame.bytesPerLine(0);
+
+                        for (int y = 0; y < height; ++y) {
+                            const uint8_t* row_src = src + y * stride;
+                            uint8_t* row_y = y_plane + y * width;
+
+                            uint8_t* row_u = u_plane + (y / 2) * (width / 2);
+                            uint8_t* row_v = v_plane + (y / 2) * (width / 2);
+
+                            for (int x = 0; x < width; ++x) {
+                                // BGRA8888 在内存中的顺序是 B, G, R, A
+                                uint8_t B = row_src[x * 4 + 0];
+                                uint8_t G = row_src[x * 4 + 1];
+                                uint8_t R = row_src[x * 4 + 2];
+                                // uint8_t A = row_src[x * 4 + 3]; // Alpha 通道直接忽略
+
+                                // 计算 Y (亮度)
+                                row_y[x] = ((66 * R + 129 * G + 25 * B + 128) >> 8) + 16;
+
+                                // 每 2x2 个像素采一次 U 和 V (4:2:0 采样)
+                                if (y % 2 == 0 && x % 2 == 0) {
+                                    row_u[x / 2] = ((-38 * R - 74 * G + 112 * B + 128) >> 8) + 128;
+                                    row_v[x / 2] = ((112 * R - 94 * G - 18 * B + 128) >> 8) + 128;
+                                }
+                            }
+                        }
+                        converted = true;
+                    }else if (pixelFormat == QVideoFrameFormat::Format_BGRA8888) {
+                        const uint8_t *src = cloneFrame.bits(0);
+                        int stride = cloneFrame.bytesPerLine(0);
+
+                        for (int y = 0; y < height; ++y) {
+                            // 定位到当前行的起始位置
+                            const uint8_t* row_src = src + y * stride;
+                            uint8_t* row_y = y_plane + y * width;
+
+                            // UV 平面的行指针 (U和V的宽高都是Y的一半)
+                            uint8_t* row_u = u_plane + (y / 2) * (width / 2);
+                            uint8_t* row_v = v_plane + (y / 2) * (width / 2);
+
+                            for (int x = 0; x < width; ++x) {
+                                // 小端模式下，XRGB8888 在内存中的顺序是 B, G, R, X
+                                uint8_t B = row_src[x * 4 + 0];
+                                uint8_t G = row_src[x * 4 + 1];
+                                uint8_t R = row_src[x * 4 + 2];
+
+                                // 计算 Y
+                                row_y[x] = ((66 * R + 129 * G + 25 * B + 128) >> 8) + 16;
+
+                                // 每 2x2 个像素采一次 U 和 V (4:2:0 的精髓)
+                                if (y % 2 == 0 && x % 2 == 0) {
+                                    row_u[x / 2] = ((-38 * R - 74 * G + 112 * B + 128) >> 8) + 128;
+                                    row_v[x / 2] = ((112 * R - 94 * G - 18 * B + 128) >> 8) + 128;
+                                }
+                            }
+                        }
+                        converted = true;
+                    }
+                    // 其他格式可加转换（如 Format_YUYV 等），暂时跳过或做软件转换
+                    else {
+                        LOG_INFO("Unsupported pixel format for direct push:%d" , pixelFormat);
+                        qWarning() << "Unsupported pixel format for direct push:" << pixelFormat;
+                        cloneFrame.unmap();
+                        return;
+                    }
+
+                    webrtcManager->writeVideoFrame(this->peerConnectionId.c_str(),videoTrackId.c_str(), i420_buffer.data(), i420_buffer.size(),
+                                                   width, height);
+
+                    cloneFrame.unmap();
+                });
+
+            });
+
+#else
+
+#endif
+
+        }
+
+    });
+
+    webrtcManager->setOnReceiveTrack([this](std::string peerConnectionId,std::string trackId,int trackType){
+
+        LOG_INFO("Received remote track: PeerConnectionId=%s, TrackId=%s, TrackType=%d",
+                 peerConnectionId.c_str(), trackId.c_str(), trackType);
+
+        if(trackType == static_cast<int>(WebRTCTrackType::video)){
+
+            videoTrackId = trackId;
+
+        }else if(trackType == static_cast<int>(WebRTCTrackType::audio)){
+
+            audioTrackId = trackId;
+
+        }
+
+    });
+
+    webrtcManager->setOnReceiveDataChannel([this](std::string peerConnectionId,std::string dataChannelId){
+
+        LOG_INFO("Received remote DataChannel: PeerConnectionId=%s, DataChannel=%s",
+                 peerConnectionId.c_str(), dataChannelId.c_str());
+
+        this->dataChannelId = dataChannelId;
+
+    });
+
+    webrtcManager->setOnOfferHandle([this](std::string peerConnectionId, std::string sdp) {
+
+        boost::asio::co_spawn(ioContext,
+                              [this, sdp, peerConnectionId]() -> boost::asio::awaitable<void> {
+                                  try {
+                                      // 1. 定义连接参数
+                                      std::string host = "127.0.0.1";
+                                      // 【修改点】：端口改为 HTTP 默认的 80
+                                      std::string port = "80";
+
+#ifdef HOPE_RTC_PUSH
+
+                                       std::string target = "/index/api/webrtc?app=live&stream=test&type=push";
+
+#else
+
+                                        std::string target = "/index/api/webrtc?app=live&stream=test&type=play";
+
+#endif
+
+
+
+
+                                      // 获取当前协程的执行器 (必须从协程内部获取 executor 传给 stream 和 resolver)
+                                      auto executor = co_await boost::asio::this_coro::executor;
+                                      boost::asio::ip::tcp::resolver resolver(executor);
+
+                                      // 【修改点】：移除 ssl_context，使用普通的 tcp_stream
+                                      boost::beast::tcp_stream stream(executor);
+
+                                      // --- 开始全异步操作 ---
+                                      // 异步 DNS 解析
+                                      auto const results = co_await resolver.async_resolve(host, port, boost::asio::use_awaitable);
+
+                                      // 【修改点】：直接建立 TCP 连接，移除 SSL 握手和 SNI 设置
+                                      co_await stream.async_connect(results, boost::asio::use_awaitable);
+
+                                      // 构造 HTTP POST 请求
+                                      boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, target, 11};
+                                      req.set(boost::beast::http::field::host, host);
+                                      req.set(boost::beast::http::field::user_agent, "Beast-WebRTC-Client-Coroutine");
+                                      req.set(boost::beast::http::field::content_type, "text/plain");
+                                      req.body() = sdp;
+                                      req.prepare_payload();
+
+                                      // 异步发送请求
+                                      co_await boost::beast::http::async_write(stream, req, boost::asio::use_awaitable);
+
+                                      // 异步接收响应
+                                      boost::beast::flat_buffer buffer;
+                                      boost::beast::http::response<boost::beast::http::string_body> res;
+                                      co_await boost::beast::http::async_read(stream, buffer, res, boost::asio::use_awaitable);
+
+                                      // 【修改点】：优雅关闭普通的 TCP socket (替换掉 async_shutdown)
+                                      boost::system::error_code shutdown_ec;
+                                      stream.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, shutdown_ec);
+                                      stream.close();
+
+                                      // --- 解析 JSON 数据 ---
+                                      if (res.result() == boost::beast::http::status::ok) {
+
+                                          boost::system::error_code json_ec;
+
+                                          boost::json::value jv = boost::json::parse(res.body(), json_ec);
+
+                                          if (!json_ec && jv.is_object()) {
+                                              auto& obj = jv.get_object();
+                                              if (obj.contains("code") && obj.at("code").as_int64() == 0) {
+                                                  std::string answerSdp = obj.at("sdp").as_string().c_str();
+                                                  // 【替换输出】：使用 LOG_INFO 打印成功信息
+                                                  LOG_INFO("✓ 成功获取 ZLM Answer SDP! (协程模式)\n");
+                                                  this->webrtcManager->processAnswer(peerConnectionId.c_str(), answerSdp.c_str());
+
+                                              } else {
+                                                  // 【替换输出】：提取 msg 字段并用 %s 格式化打印
+                                                  LOG_INFO("✗ ZLM 业务报错: %s\n", obj.at("msg").as_string().c_str());
+                                              }
+                                          } else {
+                                              LOG_INFO("✗ 解析 JSON 响应失败\n");
+                                          }
+                                      } else {
+                                          // 【替换输出】：提取状态码用 %d 格式化打印
+                                          LOG_INFO("✗ HTTP 请求失败，状态码: %d\n", res.result_int());
+                                      }
+
+                                  } catch(std::exception const& e) {
+                                      // 【替换输出】：捕获异常并用 %s 格式化打印
+                                      LOG_INFO("✗ 协程内部发生异常: %s\n", e.what());
+                                  }
+
+                                  co_return; // 结束协程
+                              },
+                              boost::asio::detached);
+    });
+
+    webrtcManager->setOnReceiveVideoFrameHandle([this](std::string peerConnectionId,std::string videoTrackId,int width,int height
+                                                          , const uint8_t* dataY, const uint8_t* dataU, const uint8_t* dataV, int strideY, int strideU, int strideV) {
+
+        std::shared_ptr<VideoFrame> videoFrame = std::make_shared<VideoFrame>(width, height);
+
+        uint8_t* destRgbData = videoFrame->data.get();
+
+        for (int y = 0; y < height; ++y) {
+            int uvY = y / 2;
+            const uint8_t* yRow = dataY + y * strideY;
+            const uint8_t* uRow = dataU + uvY * strideU;
+            const uint8_t* vRow = dataV + uvY * strideV;
+
+            // 定位到当前行的起始写入位置
+            uint8_t* rgbRow = destRgbData + y * width * 3;
+
+            for (int x = 0; x < width; ++x) {
+                int uvX = x / 2;
+
+                int Y = yRow[x];
+                int U = uRow[uvX] - 128;
+                int V = vRow[uvX] - 128;
+
+                int R = Y + ((360 * V) >> 8);
+                int G = Y - ((88 * U + 184 * V) >> 8);
+                int B = Y + ((455 * U) >> 8);
+
+                // 使用 std::clamp 限制在 0-255，比 max(0, min(255, X)) 更快且语义更直观
+                rgbRow[x * 3]     = static_cast<uint8_t>(std::clamp(R, 0, 255));
+                rgbRow[x * 3 + 1] = static_cast<uint8_t>(std::clamp(G, 0, 255));
+                rgbRow[x * 3 + 2] = static_cast<uint8_t>(std::clamp(B, 0, 255));
+            }
+        }
+
+        if(ui->widget){
+
+            ui->widget->displayFrame(videoFrame);
+
+        }
+
+
+    });
+
+    webrtcManager->setOnReceiveAudioFrameHandle([this](std::string peerConnectionId, std::string audioTrackId, const void* pcmData, int bitsPerSample, int sampleRate, size_t numberOfChannels, size_t numberOfFrames) {
+
+        qint64 totalBytes = numberOfFrames * numberOfChannels * (bitsPerSample / 8);
+
+        while (audioSink->bytesFree() < totalBytes) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5)); // 睡 5 毫秒再检查
+        }
+
+        if (this->audioDevice && this->audioDevice->isOpen()) {
+            // 直接将 void* 强转为 const char* 并写入
+            this->audioDevice->write(static_cast<const char*>(pcmData), totalBytes);
+        }
+
+    });
+
+
+    webrtcManager->setOnIceCandidateHandle([this](std::string peerConnectionId,std::string candidate,std::string mid,int mlineIndex) {
+
+        LOG_INFO("Received IceCandidate: PeerConnectionId=%s, candidate=%s, mid=%s, mlineIndex:%d",
+                 peerConnectionId.c_str(),candidate.c_str(), mid.c_str(), mlineIndex);
+
+    });
+
+
+    QAudioFormat format;
+    format.setSampleRate(48000);
+    format.setChannelCount(2);
+    format.setSampleFormat(QAudioFormat::Int16);
+
+    audioSink = new QAudioSink(format);
+
+    audioDevice = audioSink->start();
+
+    webrtcManager->addStunServer("stun:202.101.189.30:13478");
+
+    peerConnectionFactoryId = webrtcManager->createPeerConnectionFactory();
+
+    LOG_INFO("createPeerConnectionFactory");
+
+    if(!peerConnectionFactoryId.empty()){
+
+        LOG_INFO("createPeerConnectionFactory successful");
+
+        peerConnectionId = webrtcManager->createPeerConnection(peerConnectionFactoryId.c_str());
+
+        LOG_INFO("createPeerConnection");
+
+        if(!peerConnectionId.empty()){
+
+            LOG_INFO("createPeerConnection successful");
+
+#ifdef HOPE_RTC_PUSH
+
+            videoTrackId = webrtcManager->createVideoTrack(peerConnectionId.c_str(),"videoTrack",WebRTCVideoCodec::H264,WebRTCVideoPreference::MAINTAIN_FRAMERATE);
+
+            if(!videoTrackId.empty()) LOG_INFO("createVideoTrack successful");
+
+            audioTrackId = webrtcManager->createAudioTrack(peerConnectionId.c_str(),"audioTrackId");
+
+            if(!audioTrackId.empty()) LOG_INFO("createAudioTrack successful");
+
+            webrtcManager->createOffer(peerConnectionId.c_str());
+
+            LOG_INFO("createOffer");
+
+#else
+
+            webrtcManager->createOffer(peerConnectionId.c_str());
+
+            LOG_INFO("createOffer");
+#endif
+
+        }
+
+    }
+
+}
+
+MainWindow::~MainWindow()
+{
+
+}
+
+
+```
